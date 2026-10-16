@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import Mailbox from "./Mailbox";
+import { DragBar, TrafficLights } from "./WindowControls";
 import "./App.css";
 
 type Account = { email: string; display_name: string };
@@ -32,7 +33,7 @@ function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () =>
   }
 
   return (
-    <main className="centered">
+    <Onboard>
       <h1>Welcome to Graphite Mail</h1>
       <p className="muted">Choose where your offline mail and calendar will be stored. You can move it later.</p>
       <div className="row">
@@ -41,7 +42,19 @@ function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () =>
       </div>
       <button className="primary" onClick={confirm}>Continue</button>
       {error && <p className="error">{error}</p>}
-    </main>
+    </Onboard>
+  );
+}
+
+function Onboard({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="onboard">
+      <DragBar><TrafficLights /></DragBar>
+      <div className="card">
+        <img className="logo" src="/logo.svg" alt="" />
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -75,12 +88,12 @@ export default function App() {
     setAccount(null);
   }
 
-  if (!setup) return <main className="centered">{error || "Loading…"}</main>;
+  if (!setup) return <Onboard><p className="muted">{error || "Loading…"}</p></Onboard>;
   if (!setup.ready) return <SetupWizard defaultDir={setup.default_dir} onDone={loadSetup} />;
   if (account) return <Mailbox account={account} onSignOut={signOut} />;
 
   return (
-    <main className="centered">
+    <Onboard>
       <h1>Graphite Mail</h1>
       <p className="muted">Offline-first mail &amp; calendar for Microsoft 365.</p>
       <button className="primary" onClick={signIn} disabled={busy}>
@@ -88,6 +101,6 @@ export default function App() {
       </button>
       {busy && <p className="muted">Finish signing in in your web browser, then come back here.</p>}
       {error && <p className="error">{error}</p>}
-    </main>
+    </Onboard>
   );
 }

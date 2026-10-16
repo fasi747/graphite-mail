@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import DOMPurify from "dompurify";
+import { DragBar, TrafficLights } from "./WindowControls";
+import Icon from "./Icon";
 
 type Account = { email: string; display_name: string };
 type Folder = { id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null };
@@ -144,32 +146,44 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     [selected, allowRemote, theme, darkMail],
   );
 
+  const current = folders.find((f) => f.id === folderId);
+  const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+
   return (
     <div className="shell">
-      <nav className="rail">
-        <div className="brand">Graphite Mail</div>
-        <div className="account" title={account.email}>{account.email}</div>
+      <nav className="sidebar">
+        <DragBar><TrafficLights /></DragBar>
+        <div className="section">Mailboxes</div>
         <div className="folders">
           {folders.map((f) => (
             <div key={f.id} className={`folder ${f.id === folderId && !query ? "active" : ""}`} onClick={() => { setQuery(""); setFolderId(f.id); setSelected(null); }}>
-              <span>{f.name}</span>
+              <span className="ico"><Icon name={f.well_known ?? "folder"} /></span>
+              <span className="name">{f.name}</span>
               {f.unread > 0 && <span className="count">{f.unread}</span>}
             </div>
           ))}
           {!folders.length && <div className="empty">No folders yet</div>}
         </div>
-        <div className="status">
-          <span className={`dot ${online ? "" : "off"}`} />
-          <span style={{ flex: 1 }}>{online ? status || "Online" : "Offline – saved mail"}</span>
-          <button onClick={syncNow} disabled={syncing || !online} title="Sync now">⟳</button>
-          <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Toggle theme">{theme === "dark" ? "☀" : "☾"}</button>
-          <button onClick={onSignOut} title="Sign out">⎋</button>
+        <div className="account">
+          <div className="avatar">{initials(account.display_name)}</div>
+          <div className="who">
+            <div>{account.display_name}</div>
+            <div className="muted"><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}</div>
+          </div>
+          <button className="icon" onClick={onSignOut} title="Sign out"><Icon name="signout" /></button>
         </div>
       </nav>
 
       <section className="list">
+        <div className="toolbar" data-tauri-drag-region>
+          <div className="title" data-tauri-drag-region>
+            <b>{query ? "Search" : current?.name ?? "Mail"}</b>
+            <span>{query ? `${msgs.length} results` : current ? `${current.total} messages${current.unread ? `, ${current.unread} unread` : ""}` : ""}</span>
+          </div>
+          <button className="icon" onClick={syncNow} disabled={syncing || !online} title="Get new mail"><span className={syncing ? "spin" : ""}><Icon name="refresh" /></span></button>
+        </div>
         <div className="search">
-          <input placeholder="Search all saved mail…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <div className="scroller" ref={scroller}>
           {msgs.length === 0 ? (
@@ -183,7 +197,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
                     style={{ top: v.start }} onClick={() => open(m)}>
                     <div className="top">
                       <span className="from">{m.sender_name || m.sender_address || "(no sender)"}</span>
-                      <span className="date">{m.has_attachments ? "📎 " : ""}{m.is_flagged ? "⚑ " : ""}{fmtDate(m.received_at)}</span>
+                      <span className="date">{m.has_attachments && <Icon name="paperclip" size={12} />}{m.is_flagged && <span style={{ color: "#ff9f0a" }}><Icon name="flag" size={12} /></span>}{fmtDate(m.received_at)}</span>
                     </div>
                     <div className="subj">{m.subject || "(no subject)"}</div>
                     <div className="snip">{m.snippet}</div>
@@ -196,36 +210,43 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       </section>
 
       <section className="reader">
+        <div className="toolbar" data-tauri-drag-region>
+          <div className="title" data-tauri-drag-region />
+          {selected && theme === "dark" && (
+            <button className="icon" onClick={() => setDarkMail(!darkMail)} title={darkMail ? "Show email in light mode" : "Show email in dark mode"}><Icon name={darkMail ? "sun" : "moon"} /></button>
+          )}
+          <button className="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Toggle appearance"><Icon name="appearance" /></button>
+        </div>
         {selected ? (
           <>
             <header>
               <h2>{selected.subject || "(no subject)"}</h2>
-              <div className="meta">
-                <div><b>{selected.sender_name}</b> &lt;{selected.sender_address}&gt;</div>
-                {people(selected.to_json) && <div>To: {people(selected.to_json)}</div>}
-                {people(selected.cc_json) && <div>Cc: {people(selected.cc_json)}</div>}
-                <div>{new Date(selected.received_at * 1000).toLocaleString()}</div>
-              </div>
-              {theme === "dark" && (
-                <div className="tools">
-                  <button onClick={() => setDarkMail(!darkMail)}>{darkMail ? "☀ Light email" : "☾ Dark email"}</button>
+              <div className="sender">
+                <div className="avatar">{initials(selected.sender_name || selected.sender_address)}</div>
+                <div className="meta">
+                  <div><b>{selected.sender_name || selected.sender_address}</b> &lt;{selected.sender_address}&gt;</div>
+                  {people(selected.to_json) && <div>To: {people(selected.to_json)}</div>}
+                  {people(selected.cc_json) && <div>Cc: {people(selected.cc_json)}</div>}
                 </div>
-              )}
+                <div className="when">{new Date(selected.received_at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
+              </div>
             </header>
             {rendered && rendered.blocked > 0 && !allowRemote && (
               <div className="notice">
-                <span>Remote images blocked to protect your privacy.</span>
-                <button onClick={() => setAllowRemote(true)}>Show images</button>
+                <span>Remote content was blocked to protect your privacy.</span>
+                <button onClick={() => setAllowRemote(true)}>Load</button>
               </div>
             )}
             {rendered ? (
-              <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={rendered.doc} title="message" />
+              <div className="bodywrap">
+                <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={rendered.doc} title="message" />
+              </div>
             ) : (
               <div className="empty">This message hasn't been downloaded for offline reading yet. It will appear after the next sync.</div>
             )}
           </>
         ) : (
-          <div className="empty">Select a message to read</div>
+          <div className="empty">No message selected</div>
         )}
       </section>
     </div>
