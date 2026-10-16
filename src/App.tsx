@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import Mailbox from "./Mailbox";
 import "./App.css";
 
 type Account = { email: string; display_name: string };
 type SetupState = { ready: boolean; default_dir: string };
+
+try {
+  const t = localStorage.getItem("theme");
+  document.documentElement.dataset.theme = t || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+} catch { /* ignore */ }
 
 function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () => void }) {
   const [dir, setDir] = useState(defaultDir);
@@ -26,17 +32,15 @@ function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () =>
   }
 
   return (
-    <main className="container">
+    <main className="centered">
       <h1>Welcome to Graphite Mail</h1>
-      <p>Choose where your offline mail and calendar data will be stored. You can move it later.</p>
+      <p className="muted">Choose where your offline mail and calendar will be stored. You can move it later.</p>
       <div className="row">
-        <input style={{ width: 420 }} value={dir} onChange={(e) => setDir(e.target.value)} />
+        <input value={dir} onChange={(e) => setDir(e.target.value)} />
         <button onClick={browse}>Browse…</button>
       </div>
-      <p>
-        <button onClick={confirm}>Continue</button>
-      </p>
-      {error && <p style={{ color: "#c33" }}>{error}</p>}
+      <button className="primary" onClick={confirm}>Continue</button>
+      {error && <p className="error">{error}</p>}
     </main>
   );
 }
@@ -71,28 +75,19 @@ export default function App() {
     setAccount(null);
   }
 
-  if (!setup) return <main className="container">{error || "Loading…"}</main>;
+  if (!setup) return <main className="centered">{error || "Loading…"}</main>;
   if (!setup.ready) return <SetupWizard defaultDir={setup.default_dir} onDone={loadSetup} />;
+  if (account) return <Mailbox account={account} onSignOut={signOut} />;
 
   return (
-    <main className="container">
+    <main className="centered">
       <h1>Graphite Mail</h1>
-      {account ? (
-        <>
-          <p>
-            Signed in as <b>{account.display_name}</b> ({account.email})
-          </p>
-          <button onClick={signOut}>Sign out</button>
-        </>
-      ) : (
-        <>
-          <p>Offline-first mail &amp; calendar for Microsoft 365.</p>
-          <button onClick={signIn} disabled={busy}>
-            {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
-          </button>
-        </>
-      )}
-      {error && <p style={{ color: "#c33" }}>{error}</p>}
+      <p className="muted">Offline-first mail &amp; calendar for Microsoft 365.</p>
+      <button className="primary" onClick={signIn} disabled={busy}>
+        {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
+      </button>
+      {busy && <p className="muted">Finish signing in in your web browser, then come back here.</p>}
+      {error && <p className="error">{error}</p>}
     </main>
   );
 }
