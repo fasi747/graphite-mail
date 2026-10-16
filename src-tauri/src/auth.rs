@@ -1,7 +1,7 @@
 //! Microsoft identity: OAuth2 Authorization Code + PKCE via loopback redirect.
 //! Refresh tokens live only in the OS keyring (GNOME Keyring / KWallet via Secret Service).
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,7 +12,8 @@ use tokio::net::TcpListener;
 
 pub const CLIENT_ID: &str = "4fd86bd0-7f26-4941-87a6-e69aa7e982d0";
 const AUTHORITY: &str = "https://login.microsoftonline.com/common/oauth2/v2.0";
-const SCOPES: &str = "openid profile offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite";
+const SCOPES: &str =
+    "openid profile offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite";
 const KEYRING_SERVICE: &str = "graphite-mail";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -45,7 +46,11 @@ fn entry(key: &str) -> Result<keyring::Entry> {
 
 /// Runs the interactive sign-in. `open` is called with the URL to show in the system browser.
 pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
-    let verifier = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    let verifier = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
     let challenge = b64(&Sha256::digest(verifier.as_bytes()));
     let state = uuid::Uuid::new_v4().simple().to_string();
 
@@ -80,7 +85,11 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
     .await?;
 
     let account = fetch_me(&tok.access_token).await?;
-    entry("refresh_token")?.set_password(tok.refresh_token.as_deref().ok_or(anyhow!("No refresh token"))?)?;
+    entry("refresh_token")?.set_password(
+        tok.refresh_token
+            .as_deref()
+            .ok_or(anyhow!("No refresh token"))?,
+    )?;
     entry("account")?.set_password(&serde_json::to_string(&account)?)?;
     Ok(account)
 }
@@ -98,22 +107,43 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
             continue; // favicon etc.
         }
         let (ok, body) = match (q.get("code"), q.get("error")) {
-            (Some(c), _) if q.get("state").map(|s| s == state).unwrap_or(false) => (Some(c.clone()), "Signed in. You can close this tab and return to Graphite Mail."),
-            (_, Some(_)) => (None, "Sign-in was cancelled or failed. Return to Graphite Mail."),
+            (Some(c), _) if q.get("state").map(|s| s == state).unwrap_or(false) => (
+                Some(c.clone()),
+                "Signed in. You can close this tab and return to Graphite Mail.",
+            ),
+            (_, Some(_)) => (
+                None,
+                "Sign-in was cancelled or failed. Return to Graphite Mail.",
+            ),
             _ => (None, "Invalid response."),
         };
-        let html = format!("<html><body style='font-family:sans-serif;padding:3em'><h2>Graphite Mail</h2><p>{body}</p></body></html>");
+        let html = format!(
+            "<html><body style='font-family:sans-serif;padding:3em'><h2>Graphite Mail</h2><p>{body}</p></body></html>"
+        );
         let _ = sock
             .write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}", html.len()).as_bytes())
             .await;
-        return ok.ok_or_else(|| anyhow!(q.get("error_description").cloned().unwrap_or_else(|| body.to_string())));
+        return ok.ok_or_else(|| {
+            anyhow!(
+                q.get("error_description")
+                    .cloned()
+                    .unwrap_or_else(|| body.to_string())
+            )
+        });
     }
 }
 
 async fn token_request(form: &[(&str, &str)]) -> Result<TokenResponse> {
-    let resp = reqwest::Client::new().post(format!("{AUTHORITY}/token")).form(form).send().await?;
+    let resp = reqwest::Client::new()
+        .post(format!("{AUTHORITY}/token"))
+        .form(form)
+        .send()
+        .await?;
     if !resp.status().is_success() {
-        return Err(anyhow!("Token error: {}", resp.text().await.unwrap_or_default()));
+        return Err(anyhow!(
+            "Token error: {}",
+            resp.text().await.unwrap_or_default()
+        ));
     }
     let tok: TokenResponse = resp.json().await?;
     *CACHE.lock().unwrap() = Some(Cached {
@@ -152,7 +182,9 @@ pub async fn access_token() -> Result<String> {
             return Ok(c.token.clone());
         }
     }
-    let rt = entry("refresh_token")?.get_password().context("Not signed in")?;
+    let rt = entry("refresh_token")?
+        .get_password()
+        .context("Not signed in")?;
     let tok = token_request(&[
         ("client_id", CLIENT_ID),
         ("grant_type", "refresh_token"),
@@ -167,7 +199,11 @@ pub async fn access_token() -> Result<String> {
 }
 
 pub fn current_account() -> Option<Account> {
-    entry("account").ok()?.get_password().ok().and_then(|s| serde_json::from_str(&s).ok())
+    entry("account")
+        .ok()?
+        .get_password()
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
 }
 
 pub fn sign_out() -> Result<()> {

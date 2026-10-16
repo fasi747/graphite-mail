@@ -1,15 +1,56 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type Account = { email: string; display_name: string };
+type SetupState = { ready: boolean; default_dir: string };
+
+function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () => void }) {
+  const [dir, setDir] = useState(defaultDir);
+  const [error, setError] = useState("");
+
+  async function browse() {
+    const picked = await open({ directory: true, defaultPath: dir, title: "Choose where Graphite Mail stores your mail" });
+    if (typeof picked === "string") setDir(picked.endsWith("graphite-mail") ? picked : `${picked}/graphite-mail`);
+  }
+
+  async function confirm() {
+    setError("");
+    try {
+      await invoke("initialize_storage", { path: dir });
+      onDone();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  return (
+    <main className="container">
+      <h1>Welcome to Graphite Mail</h1>
+      <p>Choose where your offline mail and calendar data will be stored. You can move it later.</p>
+      <div className="row">
+        <input style={{ width: 420 }} value={dir} onChange={(e) => setDir(e.target.value)} />
+        <button onClick={browse}>Browse…</button>
+      </div>
+      <p>
+        <button onClick={confirm}>Continue</button>
+      </p>
+      {error && <p style={{ color: "#c33" }}>{error}</p>}
+    </main>
+  );
+}
 
 export default function App() {
+  const [setup, setSetup] = useState<SetupState | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const loadSetup = () => invoke<SetupState>("setup_state").then(setSetup).catch((e) => setError(String(e)));
+
   useEffect(() => {
+    loadSetup();
     invoke<Account | null>("current_account").then(setAccount);
   }, []);
 
@@ -29,6 +70,9 @@ export default function App() {
     await invoke("sign_out");
     setAccount(null);
   }
+
+  if (!setup) return <main className="container">{error || "Loading…"}</main>;
+  if (!setup.ready) return <SetupWizard defaultDir={setup.default_dir} onDone={loadSetup} />;
 
   return (
     <main className="container">
