@@ -1,51 +1,54 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+type Account = { email: string; display_name: string };
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+export default function App() {
+  const [account, setAccount] = useState<Account | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    invoke<Account | null>("current_account").then(setAccount);
+  }, []);
+
+  async function signIn() {
+    setBusy(true);
+    setError("");
+    try {
+      setAccount(await invoke<Account>("sign_in"));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signOut() {
+    await invoke("sign_out");
+    setAccount(null);
   }
 
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      <h1>Graphite Mail</h1>
+      {account ? (
+        <>
+          <p>
+            Signed in as <b>{account.display_name}</b> ({account.email})
+          </p>
+          <button onClick={signOut}>Sign out</button>
+        </>
+      ) : (
+        <>
+          <p>Offline-first mail &amp; calendar for Microsoft 365.</p>
+          <button onClick={signIn} disabled={busy}>
+            {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
+          </button>
+        </>
+      )}
+      {error && <p style={{ color: "#c33" }}>{error}</p>}
     </main>
   );
 }
-
-export default App;
