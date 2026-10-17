@@ -53,6 +53,7 @@ pub struct SyncReport {
     pub folders: usize,
     pub messages_changed: usize,
     pub bodies_downloaded: usize,
+    pub inline_images: usize,
     pub replayed: usize,
     pub events: usize,
 }
@@ -75,6 +76,10 @@ pub async fn sync_all() -> Result<SyncReport> {
         rep.messages_changed += sync_folder_messages(&account_id, &fid, &remote, delta).await?;
     }
     rep.bodies_downloaded = hydrate_bodies(200).await?;
+    rep.inline_images = hydrate_inline(200).await.unwrap_or_else(|e| {
+        eprintln!("[graphite] inline image download failed: {e}");
+        0
+    });
     rep.events = crate::calendar::sync().await.unwrap_or(0);
     Ok(rep)
 }
@@ -250,6 +255,8 @@ pub async fn hydrate_bodies(limit: usize) -> Result<usize> {
         let text = strip_html(html);
         storage::with_db(|db| {
             db.execute("UPDATE messages SET body_blob_hash=?1, body_cached=1 WHERE id=?2", params![hash, id])?;
+            // A new body may reference different images: have hydrate_inline look at it again.
+            db.execute("DELETE FROM inline_scan WHERE message_id=?1", [&id])?;
             db.execute("DELETE FROM messages_fts WHERE message_id=?1", [&id])?;
             db.execute(
                 "INSERT INTO messages_fts(message_id,subject,sender_name,sender_address,body_plaintext) VALUES(?1,?2,?3,?4,?5)",
@@ -262,10 +269,306 @@ pub async fn hydrate_bodies(limit: usize) -> Result<usize> {
     Ok(n)
 }
 
+const MAX_INLINE_BYTES: i64 = 25 * 1024 * 1024;
+
+async fn get_raw(url: &str) -> Result<Vec<u8>> {
+    let resp = reqwest::Client::new().get(url).bearer_auth(auth::access_token().await?).send().await?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("Graph {}", resp.status()));
+    }
+    Ok(resp.bytes().await?.to_vec())
+}
+
+fn mark_inline_scanned(message_id: &str) -> Result<()> {
+    storage::with_db(|db| Ok(db.execute("INSERT OR IGNORE INTO inline_scan(message_id) VALUES(?1)", [message_id]).map(|_| ())?))
+}
+
+/// Stores downloaded inline images in the blob store and records them in `attachments`.
+fn save_inline(message_id: &str, atts: &[crate::inline::Att]) -> Result<usize> {
+    let mut stored = Vec::new();
+    for a in atts {
+        if let Some(bytes) = &a.bytes {
+            stored.push((a, write_blob(bytes, "bin")?));
+        }
+    }
+    storage::with_db(|db| {
+        let tx = db.unchecked_transaction()?;
+        tx.execute("DELETE FROM attachments WHERE message_id=?1 AND is_inline=1", [message_id])?;
+        for (a, hash) in &stored {
+            tx.execute(
+                "INSERT INTO attachments(id,message_id,remote_attachment_id,filename,mime_type,size_bytes,content_id,is_inline,blob_hash,is_downloaded)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,1,?8,1)",
+                params![uuid::Uuid::new_v4().to_string(), message_id, a.remote_id, a.name, a.mime, a.size, a.content_id, hash],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    })?;
+    Ok(stored.len())
+}
+
+/// Downloads the inline images of one message. Returns true when every embeddable attachment was stored.
+async fn fetch_inline(base: &str, message_id: &str, remote_id: &str) -> Result<bool> {
+    let list = get(&format!("{base}/me/messages/{remote_id}/attachments?$top=100")).await?;
+    let mut atts: Vec<_> = crate::inline::parse_attachments(&list).into_iter().filter(|a| a.is_embeddable()).collect();
+    for a in atts.iter_mut().filter(|a| a.bytes.is_none() && a.size <= MAX_INLINE_BYTES) {
+        // Large attachments are left out of the list response; fetch them individually.
+        let one = format!("{base}/me/messages/{remote_id}/attachments/{}", a.remote_id);
+        a.bytes = match get(&one).await {
+            Ok(v) => crate::inline::parse_attachments(&serde_json::json!({ "value": [v] })).into_iter().next().and_then(|x| x.bytes),
+            Err(_) => None,
+        };
+        if a.bytes.is_none() {
+            a.bytes = get_raw(&format!("{one}/$value")).await.ok();
+        }
+    }
+    atts.retain(|a| a.size <= MAX_INLINE_BYTES);
+    let complete = atts.iter().all(|a| a.bytes.is_some());
+    save_inline(message_id, &atts)?;
+    Ok(complete)
+}
+
+/// Finds downloaded bodies that haven't been checked for cid: images yet and downloads those images.
+/// Covers new messages and everything cached before inline support existed.
+pub async fn hydrate_inline(limit: usize) -> Result<usize> {
+    hydrate_inline_from(GRAPH, limit).await
+}
+
+async fn hydrate_inline_from(base: &str, limit: usize) -> Result<usize> {
+    let pending: Vec<(String, String, String)> = storage::with_db(|db| {
+        let mut st = db.prepare(
+            "SELECT id, remote_id, body_blob_hash FROM messages
+             WHERE body_cached=1 AND body_blob_hash IS NOT NULL AND remote_id IS NOT NULL
+               AND id NOT IN (SELECT message_id FROM inline_scan)
+             ORDER BY received_at DESC LIMIT ?1",
+        )?;
+        let rows = st.query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    })?;
+    let mut n = 0;
+    for (id, rid, hash) in pending {
+        let Ok(bytes) = read_blob(&hash, "html") else { continue };
+        if crate::inline::cid_refs(&String::from_utf8_lossy(&bytes)).is_empty() {
+            mark_inline_scanned(&id)?;
+            continue;
+        }
+        match fetch_inline(base, &id, &rid).await {
+            Ok(complete) => {
+                n += 1;
+                if complete {
+                    mark_inline_scanned(&id)?;
+                }
+            }
+            Err(e) => {
+                eprintln!("[graphite] inline images for message {id} failed: {e}");
+                if e.to_string().contains("404") {
+                    mark_inline_scanned(&id)?; // message is gone remotely; don't retry forever
+                }
+            }
+        }
+    }
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use serde_json::json;
+    use crate::testutil::{json_body, mock_graph};
+
     #[test]
     fn strips_html() {
         assert_eq!(super::strip_html("<p>Hello <b>there</b></p>\n<br>world"), "Hello there world");
+    }
+
+    const PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn file_att(id: &str, cid: Option<&str>, inline: bool, mime: &str, with_bytes: bool) -> serde_json::Value {
+        let mut v = json!({ "@odata.type": "#microsoft.graph.fileAttachment", "id": id, "name": format!("{id}.png"),
+            "contentType": mime, "size": 68, "isInline": inline, "contentId": cid });
+        if with_bytes {
+            v["contentBytes"] = json!(PNG_B64);
+        }
+        v
+    }
+
+    /// Fresh vault with one cached message whose body is `html`.
+    fn vault_with_message(html: &str) -> std::path::PathBuf {
+        let tmp = storage::init_test_vault();
+        let hash = write_blob(html.as_bytes(), "html").unwrap();
+        storage::with_db(|db| {
+            db.execute_batch(
+                "INSERT INTO accounts VALUES('a','me@x.com','Me',0);
+                 INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('f','a','rf','Inbox','inbox');",
+            )?;
+            db.execute(
+                "INSERT INTO messages(id,account_id,folder_id,remote_id,subject,received_at,body_blob_hash,body_cached)
+                 VALUES('m1','a','f','R1','Hi',100,?1,1)",
+                [hash],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        *auth::TEST_TOKEN.lock().unwrap() = Some("test-token".into());
+        tmp
+    }
+
+    fn scanned(id: &str) -> bool {
+        storage::with_db(|db| Ok(db.query_row("SELECT COUNT(*) FROM inline_scan WHERE message_id=?1", [id], |r| r.get::<_, i64>(0))? > 0)).unwrap()
+    }
+
+    fn att_rows() -> Vec<(String, String, bool)> {
+        storage::with_db(|db| {
+            let mut st = db.prepare("SELECT content_id, mime_type, is_downloaded FROM attachments ORDER BY content_id")?;
+            Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?)
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn downloads_inline_images_and_renders_them_offline() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<p>Hi</p><img src="cid:logo123@mail"><img src='cid:Other'>"#);
+        let m = mock_graph(vec![(
+            "/me/messages/R1/attachments",
+            200,
+            json_body(json!({ "value": [
+                file_att("A1", Some("logo123@mail"), true, "image/png", true),
+                file_att("A2", Some("<other>"), true, "image/png", true),
+                file_att("A3", None, false, "application/pdf", true), // ordinary attachment: ignored
+            ]})),
+        )])
+        .await;
+
+        assert_eq!(hydrate_inline_from(&m.base, 50).await.unwrap(), 1);
+        assert_eq!(att_rows(), vec![("logo123@mail".into(), "image/png".into(), true), ("other".into(), "image/png".into(), true)]);
+        assert!(scanned("m1"));
+
+        // Rendering: both cid: references became data: URIs of the real image bytes.
+        let html = crate::mail::message("m1").unwrap().body_html.unwrap();
+        assert!(!html.contains("cid:"), "{html}");
+        assert_eq!(html.matches(&format!("data:image/png;base64,{PNG_B64}")).count(), 2);
+
+        // Already scanned: a second pass makes no requests at all.
+        let before = m.hits.lock().unwrap().len();
+        assert_eq!(hydrate_inline_from(&m.base, 50).await.unwrap(), 0);
+        assert_eq!(m.hits.lock().unwrap().len(), before);
+    }
+
+    #[tokio::test]
+    async fn bodies_without_images_cost_no_requests() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message("<p>No images, just mailto:cid@example.com</p>");
+        let m = mock_graph(vec![]).await;
+        assert_eq!(hydrate_inline_from(&m.base, 50).await.unwrap(), 0);
+        assert!(m.hits.lock().unwrap().is_empty());
+        assert!(scanned("m1"));
+    }
+
+    #[tokio::test]
+    async fn large_attachments_are_fetched_individually() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<img src="cid:big">"#);
+        let m = mock_graph(vec![
+            ("/me/messages/R1/attachments", 200, json_body(json!({ "value": [file_att("BIG", Some("big"), true, "image/png", false)] }))),
+            ("/me/messages/R1/attachments/BIG", 200, json_body(file_att("BIG", Some("big"), true, "image/png", true))),
+        ])
+        .await;
+        hydrate_inline_from(&m.base, 50).await.unwrap();
+        assert_eq!(att_rows().len(), 1);
+        assert!(crate::mail::message("m1").unwrap().body_html.unwrap().contains("data:image/png;base64,"));
+        assert!(scanned("m1"));
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_raw_value_download() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<img src="cid:raw">"#);
+        let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, PNG_B64).unwrap();
+        let m = mock_graph(vec![
+            ("/me/messages/R1/attachments", 200, json_body(json!({ "value": [file_att("RAW", Some("raw"), true, "image/png", false)] }))),
+            ("/me/messages/R1/attachments/RAW", 500, b"{}".to_vec()),
+            ("/me/messages/R1/attachments/RAW/$value", 200, png),
+        ])
+        .await;
+        hydrate_inline_from(&m.base, 50).await.unwrap();
+        assert!(crate::mail::message("m1").unwrap().body_html.unwrap().contains(PNG_B64));
+        assert!(scanned("m1"));
+    }
+
+    #[tokio::test]
+    async fn partial_failure_keeps_what_worked_and_retries_later() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<img src="cid:ok"><img src="cid:bad">"#);
+        let m = mock_graph(vec![
+            ("/me/messages/R1/attachments", 200, json_body(json!({ "value": [
+                file_att("OK", Some("ok"), true, "image/png", true),
+                file_att("BAD", Some("bad"), true, "image/png", false),
+            ]}))),
+            ("/me/messages/R1/attachments/BAD", 500, b"{}".to_vec()),
+        ])
+        .await;
+        hydrate_inline_from(&m.base, 50).await.unwrap();
+        assert_eq!(att_rows(), vec![("ok".into(), "image/png".into(), true)]);
+        assert!(!scanned("m1"), "incomplete message must be retried on the next sync");
+        let html = crate::mail::message("m1").unwrap().body_html.unwrap();
+        assert!(html.contains(PNG_B64) && html.contains("cid:bad"));
+    }
+
+    #[tokio::test]
+    async fn vanished_message_is_not_retried_forever_but_other_errors_are() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<img src="cid:x">"#);
+        let gone = mock_graph(vec![("/me/messages/R1/attachments", 404, b"{}".to_vec())]).await;
+        hydrate_inline_from(&gone.base, 50).await.unwrap();
+        assert!(scanned("m1"));
+
+        storage::with_db(|db| Ok(db.execute("DELETE FROM inline_scan", [])?)).unwrap();
+        let broken = mock_graph(vec![("/me/messages/R1/attachments", 503, b"{}".to_vec())]).await;
+        hydrate_inline_from(&broken.base, 50).await.unwrap();
+        assert!(!scanned("m1"));
+    }
+
+    #[tokio::test]
+    async fn rescanning_replaces_rows_instead_of_duplicating() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<img src="cid:a">"#);
+        let m = mock_graph(vec![("/me/messages/R1/attachments", 200, json_body(json!({ "value": [file_att("A", Some("a"), true, "image/png", true)] })))]).await;
+        hydrate_inline_from(&m.base, 50).await.unwrap();
+        storage::with_db(|db| Ok(db.execute("DELETE FROM inline_scan", [])?)).unwrap(); // what hydrate_bodies does on a changed body
+        hydrate_inline_from(&m.base, 50).await.unwrap();
+        assert_eq!(att_rows().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn respects_the_per_pass_limit_newest_first() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        vault_with_message(r#"<img src="cid:a">"#);
+        let hash = write_blob(br#"<img src="cid:a">"#, "html").unwrap();
+        storage::with_db(|db| {
+            db.execute(
+                "INSERT INTO messages(id,account_id,folder_id,remote_id,subject,received_at,body_blob_hash,body_cached)
+                 VALUES('m2','a','f','R2','Newer',200,?1,1)",
+                [hash],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let m = mock_graph(vec![
+            ("/me/messages/R2/attachments", 200, json_body(json!({ "value": [file_att("A", Some("a"), true, "image/png", true)] }))),
+            ("/me/messages/R1/attachments", 200, json_body(json!({ "value": [file_att("A", Some("a"), true, "image/png", true)] }))),
+        ])
+        .await;
+        hydrate_inline_from(&m.base, 1).await.unwrap();
+        assert!(scanned("m2") && !scanned("m1"));
+    }
+
+    #[test]
+    fn blob_store_roundtrip_is_content_addressed() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        storage::init_test_vault();
+        let a = write_blob(b"same", "bin").unwrap();
+        assert_eq!(a, write_blob(b"same", "bin").unwrap());
+        assert_eq!(read_blob(&a, "bin").unwrap(), b"same");
     }
 }

@@ -229,6 +229,17 @@ pub fn rsvp(id: &str, response: &str) -> Result<()> {
         _ => return Err(anyhow!("Unknown response")),
     };
     storage::with_db(|db| {
+        // Graph rejects responses to events you organise, to events without invitees, and in read-only calendars
+        // (always 400/403), so don't queue those.
+        let (mine, attendees, can_edit): (String, Option<String>, bool) = db.query_row(
+            "SELECT e.my_response_status, e.attendees_json, c.can_edit FROM calendar_events e JOIN calendars c ON c.id=e.calendar_id WHERE e.id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let invitees = attendees.and_then(|a| serde_json::from_str::<Vec<Value>>(&a).ok()).map_or(0, |a| a.len());
+        if mine == "organizer" || invitees == 0 || !can_edit {
+            return Err(anyhow!("You can't respond to this event (you organise it, it has no invitees, or the calendar is read-only)"));
+        }
         let tx = db.unchecked_transaction()?;
         tx.execute("UPDATE calendar_events SET my_response_status=?1, sync_status='DIRTY_LOCAL' WHERE id=?2", params![status, id])?;
         tx.execute("DELETE FROM offline_mutation_queue WHERE local_entity_id=?1 AND operation='RSVP'", [id])?;
@@ -318,5 +329,38 @@ mod tests {
         assert_eq!(color_for(&json!({ "color": "lightGreen" }), 0), "#30d158");
         assert_eq!(color_for(&json!({ "hexColor": "#123456" }), 0), "#123456");
         assert_eq!(color_for(&json!({ "color": "auto" }), 1), "#ff9f0a");
+    }
+
+    #[test]
+    fn only_queues_rsvps_graph_can_accept() {
+        let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        storage::init_test_vault();
+        storage::with_db(|db| {
+            db.execute_batch(
+                "INSERT INTO accounts VALUES('a','me@x.com','Me',0);
+                 INSERT INTO calendars(id,account_id,remote_id,name,color_hex,can_edit) VALUES('c','a','RC','Calendar','#000',1);
+                 INSERT INTO calendars(id,account_id,remote_id,name,color_hex,can_edit) VALUES('ro','a','RRO','Holidays','#000',0);
+                 INSERT INTO calendar_events(id,calendar_id,remote_id,ical_uid,event_type,title,start_utc,end_utc,original_timezone,attendees_json,my_response_status)
+                   VALUES('ok','c','r1','u1','x','Team meeting',1,2,'UTC','[{\"email\":\"b@x.com\"}]','notResponded'),
+                         ('mine','c','r2','u2','x','My meeting',1,2,'UTC','[{\"email\":\"b@x.com\"}]','organizer'),
+                         ('solo','c','r3','u3','x','Dentist',1,2,'UTC','[]','none'),
+                         ('hol','ro','r4','u4','x','Public holiday',1,2,'UTC','[{\"email\":\"b@x.com\"}]','none');",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        for id in ["mine", "solo", "hol"] {
+            assert!(rsvp(id, "accept").is_err(), "{id} must be refused");
+        }
+        assert!(rsvp("ok", "bogus").is_err());
+        let queued = |id: &str| -> i64 {
+            storage::with_db(|db| Ok(db.query_row("SELECT COUNT(*) FROM offline_mutation_queue WHERE local_entity_id=?1", [id], |r| r.get(0))?)).unwrap()
+        };
+        assert_eq!((queued("mine"), queued("solo"), queued("hol")), (0, 0, 0));
+        rsvp("ok", "tentativelyAccept").unwrap();
+        rsvp("ok", "decline").unwrap(); // replaces the earlier queued answer
+        assert_eq!(queued("ok"), 1);
+        let status: String = storage::with_db(|db| Ok(db.query_row("SELECT my_response_status FROM calendar_events WHERE id='ok'", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(status, "declined");
     }
 }

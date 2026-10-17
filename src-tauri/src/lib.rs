@@ -1,9 +1,12 @@
 mod storage;
 mod auth;
 mod calendar;
+mod inline;
 mod mail;
 mod outbox;
 mod sync;
+#[cfg(test)]
+mod testutil;
 
 use auth::Account;
 use tauri_plugin_opener::OpenerExt;
@@ -113,6 +116,17 @@ fn pending_actions() -> CmdResult<i64> {
     outbox::pending_count().map_err(|e| e.to_string())
 }
 
+/// Queued changes that Graph rejected permanently (shown in the sidebar so they don't wait forever unseen).
+#[tauri::command]
+fn failed_actions() -> CmdResult<Vec<outbox::FailedAction>> {
+    outbox::failed_actions().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn discard_failed_actions() -> CmdResult<usize> {
+    outbox::discard_failed().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn list_calendars() -> CmdResult<Vec<calendar::Calendar>> {
     calendar::calendars().map_err(|e| e.to_string())
@@ -200,6 +214,8 @@ pub fn run() {
             delete_message,
             send_mail,
             pending_actions,
+            failed_actions,
+            discard_failed_actions,
             list_calendars,
             list_events,
             rsvp_event,

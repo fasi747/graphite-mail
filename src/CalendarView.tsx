@@ -192,6 +192,7 @@ function EventDetail({ e, cal, onClose, onRespond, onDelete }: { e: Ev; cal?: Ca
   const attendees = safe<{ name?: string; email?: string; response?: string }[]>(e.attendees_json, []);
   const org = safe<{ name?: string; address?: string }>(e.organizer_json, {});
   const isOrganizer = e.my_response === "organizer";
+  const canRespond = !isOrganizer && attendees.length > 0 && cal?.can_edit !== false; // Graph rejects anything else
   const [s, en] = evDays(e);
   const when = e.is_all_day
     ? `${s.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}${en.getTime() - s.getTime() > DAY * 1000 ? ` – ${addDays(en, -1).toLocaleDateString([], { day: "numeric", month: "long" })}` : ""} · All day`
@@ -208,7 +209,7 @@ function EventDetail({ e, cal, onClose, onRespond, onDelete }: { e: Ev; cal?: Ca
         </div>
         <div className="evbody">
           {e.online_meeting_url && <button className="primary" onClick={() => invoke("open_link", { url: e.online_meeting_url! })}>Join Teams meeting</button>}
-          {!isOrganizer && (
+          {canRespond && (
             <div className="rsvp">
               <span className="muted">{label[e.my_response] ?? e.my_response}</span>
               <button onClick={() => onRespond(e, "accept")}>Accept</button>

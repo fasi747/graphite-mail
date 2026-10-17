@@ -175,8 +175,16 @@ async fn fetch_me(token: &str) -> Result<Account> {
     })
 }
 
+/// Tests set this to skip the keyring and token endpoint.
+#[cfg(test)]
+pub static TEST_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
 /// Returns a valid access token, refreshing silently via the keyring-stored refresh token.
 pub async fn access_token() -> Result<String> {
+    #[cfg(test)]
+    if let Some(t) = TEST_TOKEN.lock().unwrap().clone() {
+        return Ok(t);
+    }
     if let Some(c) = CACHE.lock().unwrap().as_ref() {
         if Instant::now() < c.expires {
             return Ok(c.token.clone());

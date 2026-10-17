@@ -169,6 +169,11 @@ CREATE TABLE IF NOT EXISTS attachments (
     is_downloaded INTEGER DEFAULT 0
 );
 
+-- Messages whose body has been checked for cid: images (and, if any, those images downloaded).
+CREATE TABLE IF NOT EXISTS inline_scan (
+    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS calendars (
     id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -216,6 +221,19 @@ CREATE TABLE IF NOT EXISTS offline_mutation_queue (
     created_at INTEGER NOT NULL
 );
 "#;
+
+/// The DB handle and config dir are process-wide, so tests that touch them take this lock.
+#[cfg(test)]
+pub static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Test helper: point the app at a fresh empty vault and return its path.
+#[cfg(test)]
+pub fn init_test_vault() -> PathBuf {
+    let tmp = std::env::temp_dir().join(format!("gm-test-{}", uuid::Uuid::new_v4()));
+    unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
+    initialize(tmp.join("vault").to_str().unwrap()).unwrap();
+    tmp
+}
 
 #[cfg(test)]
 mod tests {

@@ -35,7 +35,7 @@ pub struct MessageDetail {
     row: MessageRow,
     to_json: Option<String>,
     cc_json: Option<String>,
-    body_html: Option<String>,
+    pub body_html: Option<String>,
 }
 
 const ROW_COLS: &str = "m.id, m.subject, m.sender_name, m.sender_address, m.snippet, m.received_at, m.is_read, m.is_flagged, m.has_attachments";
@@ -103,6 +103,26 @@ pub fn search(q: &str, limit: i64) -> Result<Vec<MessageRow>> {
     })
 }
 
+/// Swaps cid: references for the downloaded inline images (as data: URIs) so they render offline.
+fn embed_inline_images(message_id: &str, html: String) -> String {
+    if crate::inline::cid_refs(&html).is_empty() {
+        return html;
+    }
+    let images: Vec<(String, String, String)> = storage::with_db(|db| {
+        let mut st = db.prepare(
+            "SELECT content_id, mime_type, blob_hash FROM attachments
+             WHERE message_id=?1 AND is_downloaded=1 AND content_id IS NOT NULL AND blob_hash IS NOT NULL",
+        )?;
+        let rows = st.query_map([message_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    })
+    .unwrap_or_default();
+    crate::inline::resolve_cids(&html, |cid| {
+        let (_, mime, hash) = images.iter().find(|(c, _, _)| crate::inline::norm_cid(c) == cid)?;
+        Some((mime.clone(), sync::read_blob(hash, "bin").ok()?))
+    })
+}
+
 pub fn message(id: &str) -> Result<MessageDetail> {
     let (row, to, cc, hash): (MessageRow, Option<String>, Option<String>, Option<String>) = storage::with_db(|db| {
         Ok(db.query_row(
@@ -112,6 +132,7 @@ pub fn message(id: &str) -> Result<MessageDetail> {
         )?)
     })?;
     let body_html = hash.and_then(|h| sync::read_blob(&h, "html").ok()).map(|b| String::from_utf8_lossy(&b).into_owned());
+    let body_html = body_html.map(|html| embed_inline_images(id, html));
     Ok(MessageDetail { row, to_json: to, cc_json: cc, body_html })
 }
 
@@ -120,9 +141,8 @@ mod tests {
     use super::*;
     #[test]
     fn local_queries_and_search() {
-        let tmp = std::env::temp_dir().join(format!("gm-test-{}", uuid::Uuid::new_v4()));
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
-        storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
+        let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        storage::init_test_vault();
         storage::with_db(|db| {
             db.execute_batch(
                 "INSERT INTO accounts VALUES('a','me@x.com','Me',0);

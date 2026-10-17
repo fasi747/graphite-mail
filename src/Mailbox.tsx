@@ -60,9 +60,14 @@ function buildDoc(html: string, allowRemote: boolean, dark: boolean) {
     }
   });
   const clean = DOMPurify.sanitize(html, { WHOLE_DOCUMENT: true, FORBID_TAGS: ["script", "form", "iframe", "object", "embed"] });
+  const nonce = crypto.randomUUID().replace(/-/g, "");
+  // WebKit does not run listeners that the parent attaches inside a script-less sandboxed frame, so the frame
+  // forwards link clicks itself. Only this nonce'd script can run (email scripts are stripped and CSP-blocked),
+  // and without allow-same-origin the frame stays isolated from the app.
+  const linkScript = `(function(){function f(e){var a=e.target;while(a&&a.nodeType===1&&a.tagName!=="A")a=a.parentNode;if(!a||a.nodeType!==1)return;e.preventDefault();parent.postMessage({graphiteLink:"${nonce}",href:a.getAttribute("href")||""},"*")}document.addEventListener("click",f,true);document.addEventListener("auxclick",f,true)})();`;
   const darkCss = dark ? "html{filter:invert(.9) hue-rotate(180deg);background:#fff} img,video,picture{filter:invert(1) hue-rotate(180deg)}" : "";
-  const doc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid: ${allowRemote ? "https: http:" : ""}; style-src 'unsafe-inline';"><style>body{font-family:system-ui,sans-serif;font-size:14px;margin:16px 20px;word-wrap:break-word} ${darkCss}</style></head><body>${clean}</body></html>`;
-  return { doc, blocked };
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; img-src data: cid: ${allowRemote ? "https: http:" : ""}; style-src 'unsafe-inline';"><style>body{font-family:system-ui,sans-serif;font-size:14px;margin:16px 20px;word-wrap:break-word} ${darkCss}</style></head><body>${clean}<script nonce="${nonce}">${linkScript}</script></body></html>`;
+  return { doc, blocked, nonce };
 }
 
 export default function Mailbox({ account, onSignOut }: { account: Account; onSignOut: () => void }) {
@@ -83,6 +88,11 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   const [compose, setCompose] = useState<ComposeInit | null>(null);
   const [toast, setToast] = useState("");
   const [pending, setPending] = useState(0);
+  const [failed, setFailed] = useState<{ seq: number; operation: string; error: string }[]>([]);
+  const refreshPending = () => {
+    invoke<number>("pending_actions").then(setPending).catch(() => {});
+    invoke<typeof failed>("failed_actions").then(setFailed).catch(() => {});
+  };
   const [moveOpen, setMoveOpen] = useState(false);
   const [view, setView] = useState<"mail" | "calendar">("mail");
   const [cals, setCals] = useState<Cal[]>([]);
@@ -108,7 +118,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     const { folderId, query } = viewRef.current;
     if (query.trim()) setMsgs(await invoke<Msg[]>("search_messages", { query }));
     else if (folderId) setMsgs(await invoke<Msg[]>("list_messages", { folderId, offset: 0, limit: PAGE }));
-    invoke<number>("pending_actions").then(setPending).catch(() => {});
+    refreshPending();
   };
 
   const flash = (t: string) => { setToast(t); setTimeout(() => setToast(""), 2600); };
@@ -123,7 +133,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     if (next) open(next); else setSelected(null);
   };
   const act = async (fn: () => Promise<unknown>, after?: () => void) => {
-    try { await fn(); after?.(); loadFolders(); invoke<number>("pending_actions").then(setPending); }
+    try { await fn(); after?.(); loadFolders(); refreshPending(); }
     catch (e) { flash(String(e)); }
   };
   const toggleRead = (m: Msg) => act(() => invoke("set_read", { id: m.id, read: !m.is_read }), () => patch(m.id, { is_read: !m.is_read }));
@@ -223,24 +233,38 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     }
   };
 
-  // Open links from emails in the system browser instead of inside the app.
-  const hookLinks = (frame: HTMLIFrameElement | null) => {
-    const doc = frame?.contentDocument;
-    if (!doc) { invoke("log_js", { message: "hookLinks: no access to message frame" }); return; }
-    doc.addEventListener("click", (ev) => {
-      const a = (ev.target as HTMLElement).closest("a");
-      if (!a) return;
-      ev.preventDefault();
-      const href = a.getAttribute("href") ?? "";
-      if (/^mailto:/i.test(href)) setCompose({ mode: "new", to: [decodeURIComponent(href.slice(7).split("?")[0])] });
-      else if (/^https?:/i.test(href)) invoke("open_link", { url: href }).catch((e) => flash(String(e)));
-    });
-  };
-
   const rendered = useMemo(
     () => (selected?.body_html ? buildDoc(selected.body_html, allowRemote, theme === "dark" && darkMail) : null),
     [selected, allowRemote, theme, darkMail],
   );
+
+  // Links clicked inside the message frame arrive here as messages; open them in the system browser.
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const nonceRef = useRef("");
+  nonceRef.current = rendered?.nonce ?? "";
+  useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.source !== frameRef.current?.contentWindow) return;
+      const d = ev.data as { graphiteLink?: string; href?: string } | null;
+      if (!d || !nonceRef.current || d.graphiteLink !== nonceRef.current || typeof d.href !== "string") return;
+      const href = d.href.trim();
+      if (/^mailto:/i.test(href)) {
+        let to = href.slice(7).split("?")[0];
+        try { to = decodeURIComponent(to); } catch { /* keep raw */ }
+        setCompose({ mode: "new", to: [to] });
+      } else if (/^https?:/i.test(href)) invoke("open_link", { url: href }).catch((e) => flash(String(e)));
+    };
+    addEventListener("message", onMessage);
+    return () => removeEventListener("message", onMessage);
+  }, []);
+
+  const reviewFailed = async () => {
+    const list = failed.map((f) => `• ${f.operation}: ${f.error || "unknown error"}`).join("\n");
+    if (await ask(`These changes were rejected by Microsoft 365 and were not applied:\n\n${list}\n\nDiscard them?`, { title: "Changes that couldn't sync", kind: "warning", okLabel: "Discard", cancelLabel: "Keep" })) {
+      await invoke("discard_failed_actions").catch((e) => flash(String(e)));
+      refreshPending();
+    }
+  };
 
   const current = folders.find((f) => f.id === folderId);
   const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -249,7 +273,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     <div className="shell">
       <nav className="sidebar">
         <DragBar><TrafficLights /></DragBar>
-        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => { invoke("log_js", { message: `calendar clicked, view=${view}, calendars=${cals.length}` }); setView(view === "calendar" ? "mail" : "calendar"); }}>
+        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => { invoke("log_js", { message: `calendar clicked, view=${view}, calendars=${cals.length}` }); setView("calendar"); }}>
           <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
         </div>
         <div className="section">Mailboxes</div>
@@ -276,6 +300,9 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
           <div className="who">
             <div>{account.display_name}</div>
             <div className="muted"><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}{pending > 0 ? ` · ${pending} waiting to sync` : ""}</div>
+            {failed.length > 0 && (
+              <div className="muted"><a href="#" style={{ color: "#e5484d" }} title={failed.map((f) => f.error).join("\n")} onClick={(e) => { e.preventDefault(); reviewFailed(); }}>{failed.length} {failed.length === 1 ? "change" : "changes"} couldn't sync</a></div>
+            )}
           </div>
           <button className="icon" onClick={onSignOut} title="Sign out"><Icon name="signout" /></button>
         </div>
@@ -369,7 +396,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
             )}
             {rendered ? (
               <div className="bodywrap">
-                <iframe sandbox="allow-same-origin" srcDoc={rendered.doc} title="message" onLoad={(e) => hookLinks(e.currentTarget)} />
+                <iframe ref={frameRef} sandbox="allow-scripts" srcDoc={rendered.doc} title="message" />
               </div>
             ) : (
               <div className="empty">This message hasn't been downloaded for offline reading yet. It will appear after the next sync.</div>
@@ -382,7 +409,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       </>}
       {compose && (
         <Compose init={compose} onClose={() => setCompose(null)}
-          onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); invoke<number>("pending_actions").then(setPending); }} />
+          onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshPending(); }} />
       )}
       {toast && <div className="toast">{toast}</div>}
     </div>
