@@ -7,7 +7,6 @@ import { DragBar, TrafficLights } from "./WindowControls";
 import Icon from "./Icon";
 import Compose, { ComposeInit } from "./Compose";
 import CalendarView, { Cal } from "./CalendarView";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 type Account = { email: string; display_name: string };
@@ -227,14 +226,14 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   // Open links from emails in the system browser instead of inside the app.
   const hookLinks = (frame: HTMLIFrameElement | null) => {
     const doc = frame?.contentDocument;
-    if (!doc) return;
+    if (!doc) { invoke("log_js", { message: "hookLinks: no access to message frame" }); return; }
     doc.addEventListener("click", (ev) => {
       const a = (ev.target as HTMLElement).closest("a");
       if (!a) return;
       ev.preventDefault();
       const href = a.getAttribute("href") ?? "";
       if (/^mailto:/i.test(href)) setCompose({ mode: "new", to: [decodeURIComponent(href.slice(7).split("?")[0])] });
-      else if (/^https?:/i.test(href)) openUrl(href).catch((e) => flash(String(e)));
+      else if (/^https?:/i.test(href)) invoke("open_link", { url: href }).catch((e) => flash(String(e)));
     });
   };
 
@@ -250,7 +249,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     <div className="shell">
       <nav className="sidebar">
         <DragBar><TrafficLights /></DragBar>
-        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView(view === "calendar" ? "mail" : "calendar")}>
+        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => { invoke("log_js", { message: `calendar clicked, view=${view}, calendars=${cals.length}` }); setView(view === "calendar" ? "mail" : "calendar"); }}>
           <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
         </div>
         <div className="section">Mailboxes</div>

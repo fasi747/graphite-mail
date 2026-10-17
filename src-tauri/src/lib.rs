@@ -144,6 +144,24 @@ async fn delete_event(id: String) -> CmdResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_link(app: tauri::AppHandle, url: String) -> CmdResult<()> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Only web links can be opened".into());
+    }
+    eprintln!("[graphite] opening link: {url}");
+    app.opener().open_url(url, None::<&str>).map_err(|e| {
+        eprintln!("[graphite] open_link failed: {e}");
+        e.to_string()
+    })
+}
+
+/// Lets the UI report JavaScript errors to the terminal for debugging.
+#[tauri::command]
+fn log_js(message: String) {
+    eprintln!("[graphite][ui] {message}");
+}
+
 /// Background loop: sync every 2 minutes while signed in; notify the UI after each pass.
 fn spawn_sync_loop(app: tauri::AppHandle) {
     use tauri::Emitter;
@@ -152,6 +170,7 @@ fn spawn_sync_loop(app: tauri::AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             if auth::current_account().is_some() && storage::read_bootstrap().is_some() {
                 let res = sync::sync_all().await.map_err(|e| e.to_string());
+                if let Err(e) = &res { eprintln!("[graphite] background sync failed: {e}"); }
                 let _ = app.emit("sync-finished", res.is_ok());
             }
         }
@@ -185,7 +204,9 @@ pub fn run() {
             list_events,
             rsvp_event,
             create_event,
-            delete_event
+            delete_event,
+            open_link,
+            log_js
         ])
         .setup(|app| {
             spawn_sync_loop(app.handle().clone());

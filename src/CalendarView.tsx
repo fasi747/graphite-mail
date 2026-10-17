@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import DOMPurify from "dompurify";
 import Icon from "./Icon";
@@ -50,7 +49,7 @@ export default function CalendarView({ calendars, hidden, onToast }: { calendars
     return [s, addDays(s, 42)];
   }, [mode, anchor]);
 
-  const load = () => invoke<Ev[]>("list_events", { start: ts(range[0]) - DAY, end: ts(range[1]) + DAY }).then(setEvents).catch((e) => onToast(String(e)));
+  const load = () => invoke<Ev[]>("list_events", { start: ts(range[0]) - DAY, end: ts(range[1]) + DAY }).then(setEvents).catch((e) => { invoke("log_js", { message: `list_events failed: ${e}` }); onToast(String(e)); });
   useEffect(() => { load(); }, [range[0].getTime(), mode]);
   useEffect(() => { try { localStorage.setItem("calMode", mode); } catch { /* ignore */ } }, [mode]);
   useEffect(() => { if (mode === "week" && grid.current) grid.current.scrollTop = HOUR_PX * 7.5; }, [mode]);
@@ -189,8 +188,9 @@ function layout(list: Ev[], day: Date) {
 }
 
 function EventDetail({ e, cal, onClose, onRespond, onDelete }: { e: Ev; cal?: Cal; onClose: () => void; onRespond: (e: Ev, r: string) => void; onDelete: (e: Ev) => void }) {
-  const attendees: { name?: string; email?: string; response?: string }[] = JSON.parse(e.attendees_json || "[]");
-  const org = JSON.parse(e.organizer_json || "{}") as { name?: string; address?: string };
+  const safe = <T,>(j: string | null, d: T): T => { try { return (j ? JSON.parse(j) : d) ?? d; } catch { return d; } };
+  const attendees = safe<{ name?: string; email?: string; response?: string }[]>(e.attendees_json, []);
+  const org = safe<{ name?: string; address?: string }>(e.organizer_json, {});
   const isOrganizer = e.my_response === "organizer";
   const [s, en] = evDays(e);
   const when = e.is_all_day
@@ -207,7 +207,7 @@ function EventDetail({ e, cal, onClose, onRespond, onDelete }: { e: Ev; cal?: Ca
           <div className="muted" style={{ marginTop: 4 }}><i className="caldot" style={{ background: e.color }} />{cal?.name}{e.pending ? " · waiting to sync" : ""}</div>
         </div>
         <div className="evbody">
-          {e.online_meeting_url && <button className="primary" onClick={() => openUrl(e.online_meeting_url!)}>Join Teams meeting</button>}
+          {e.online_meeting_url && <button className="primary" onClick={() => invoke("open_link", { url: e.online_meeting_url! })}>Join Teams meeting</button>}
           {!isOrganizer && (
             <div className="rsvp">
               <span className="muted">{label[e.my_response] ?? e.my_response}</span>
