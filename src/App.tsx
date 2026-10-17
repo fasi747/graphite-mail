@@ -51,7 +51,7 @@ function Onboard({ children }: { children: React.ReactNode }) {
     <div className="onboard">
       <DragBar><TrafficLights /></DragBar>
       <div className="card">
-        <img className="logo" src="/logo.svg" alt="" />
+        <img className="logo" src="/logo.png" alt="" />
         {children}
       </div>
     </div>
