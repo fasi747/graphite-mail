@@ -159,3 +159,61 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .menu div { padding: 6px 10px; border-radius: 6px; }
 .menu div:hover { background: var(--selected); color: #fff; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text-primary); color: var(--panel); padding: 8px 16px; border-radius: 999px; font-size: 12.5px; z-index: 20; box-shadow: var(--shadow); }
+
+/* Calendar */
+.navitem { margin: 0 8px 2px; }
+.calrow input { margin: 0 4px 0 2px; }
+.calendar { grid-column: 2 / 4; background: var(--panel); border-radius: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
+.seg { display: inline-flex; background: var(--field); border-radius: 999px; padding: 2px; margin-right: 8px; }
+.seg button { background: transparent; padding: 4px 12px; }
+.seg button.on { background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.seg button:hover { box-shadow: none; }
+.week { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.week-head, .allday-row { display: grid; grid-template-columns: 56px repeat(7, 1fr); border-bottom: 1px solid var(--separator); }
+.dayhead { padding: 6px 8px; font-size: 12px; color: var(--text-secondary); }
+.dayhead b { font-size: 16px; color: var(--text-primary); font-weight: 600; }
+.dayhead.today b { background: var(--accent); color: #fff; border-radius: 999px; padding: 1px 7px; }
+.gutter { font-size: 10px; color: var(--text-secondary); padding: 4px 6px; text-align: right; }
+.allday-cell { min-height: 26px; padding: 2px; border-left: 1px solid var(--separator); }
+.chip { color: #fff; font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 5px; margin-bottom: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: default; }
+.week-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: 56px repeat(7, 1fr); position: relative; }
+.hours div { position: relative; }
+.hours span { position: absolute; top: -7px; right: 6px; font-size: 10px; color: var(--text-secondary); }
+.daycol { position: relative; border-left: 1px solid var(--separator); background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 47px, var(--separator) 47px, var(--separator) 48px); }
+.nowline { position: absolute; left: 0; right: 0; height: 2px; background: #ff453a; z-index: 2; }
+.nowline::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: #ff453a; }
+.ev { position: absolute; border-radius: 6px; padding: 3px 6px; overflow: hidden; font-size: 11.5px; line-height: 1.3; cursor: default;
+  background: color-mix(in srgb, var(--c) 22%, var(--panel)); border-left: 3px solid var(--c); color: var(--text-primary); }
+.ev b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev span { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.ev.tentative { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) 18%, var(--panel)) 0 6px, var(--panel) 6px 12px); }
+.ev.declined { opacity: .45; text-decoration: line-through; }
+.ev:hover { filter: brightness(.97); box-shadow: 0 2px 8px rgba(0,0,0,.12); z-index: 3; }
+.month { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: 28px repeat(6, 1fr); min-height: 0; }
+.mhead { font-size: 11px; color: var(--text-secondary); padding: 6px 8px; text-align: right; }
+.mcell { border-top: 1px solid var(--separator); border-left: 1px solid var(--separator); padding: 4px; overflow: hidden; min-height: 0; }
+.mcell.out { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.mcell.out .mday { color: var(--text-secondary); }
+.mday { text-align: right; font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+.mday.today span { background: var(--accent); color: #fff; border-radius: 999px; padding: 1px 6px; }
+.mev { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 4px; border-radius: 4px; display: flex; gap: 4px; align-items: center; cursor: default; }
+.mev:hover { background: var(--hover); }
+.mev i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.more { font-size: 11px; color: var(--text-secondary); padding: 0 4px; cursor: default; }
+.evsheet { height: auto; max-height: 84vh; width: min(520px, 92vw); }
+.evhead { padding: 18px 20px 12px; border-left: 4px solid; margin: 12px 12px 0; border-radius: 4px; }
+.evhead h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.01em; user-select: text; }
+.caldot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.evbody { padding: 12px 20px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; user-select: text; }
+.evbody > button.primary { align-self: flex-start; }
+.rsvp { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rsvp .muted { margin-right: 6px; }
+.people { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow-y: auto; }
+.evdesc { font-size: 12.5px; border-top: 1px solid var(--separator); padding-top: 10px; overflow-wrap: anywhere; }
+.form { padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+.form input.big { font-size: 17px; font-weight: 600; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.form label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text-primary); font-size: 13px; }
+.form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form select, .form textarea { font: inherit; color: var(--text-primary); background: var(--field); border: 0; border-radius: 9px; padding: 7px 10px; }
+.form textarea { resize: vertical; user-select: text; }

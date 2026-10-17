@@ -54,6 +54,7 @@ pub struct SyncReport {
     pub messages_changed: usize,
     pub bodies_downloaded: usize,
     pub replayed: usize,
+    pub events: usize,
 }
 
 /// Full sync pass: folders → message deltas → bodies.
@@ -74,6 +75,7 @@ pub async fn sync_all() -> Result<SyncReport> {
         rep.messages_changed += sync_folder_messages(&account_id, &fid, &remote, delta).await?;
     }
     rep.bodies_downloaded = hydrate_bodies(200).await?;
+    rep.events = crate::calendar::sync().await.unwrap_or(0);
     Ok(rep)
 }
 

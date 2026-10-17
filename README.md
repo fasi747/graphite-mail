@@ -13,6 +13,7 @@ Built with Tauri (Rust) + React. Uses Microsoft Graph — no IMAP/POP3.
 
 ![Light](docs/screenshot-light.png)
 ![Dark](docs/screenshot-dark.png)
+![Calendar](docs/screenshot-calendar.png)
 
 ## Install (Ubuntu/Debian)
 
@@ -23,4 +24,4 @@ graphite-mail
 
 ## Status
 
-Mail is working. Calendar is in progress. See [PLAN.md](PLAN.md).
+Mail and calendar are working. See [PLAN.md](PLAN.md).

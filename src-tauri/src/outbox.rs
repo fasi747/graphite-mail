@@ -192,7 +192,11 @@ pub async fn replay() -> Result<usize> {
     for it in items {
         let rid: Option<String> = storage::with_db(|db| {
             Ok(db
-                .query_row("SELECT remote_id FROM messages WHERE id=?1", [&it.entity], |r| r.get(0))
+                .query_row(
+                    "SELECT remote_id FROM messages WHERE id=?1 UNION ALL SELECT remote_id FROM calendar_events WHERE id=?1 LIMIT 1",
+                    [&it.entity],
+                    |r| r.get(0),
+                )
                 .optional()?
                 .flatten())
         })?;
@@ -220,7 +224,16 @@ pub async fn replay() -> Result<usize> {
                     }
                 }
             }
-            (_, None) => Ok((404, Value::Null)), // message no longer exists remotely
+            ("RSVP", Some(r)) => {
+                let resp = p["response"].as_str().unwrap_or("accept");
+                call(Method::POST, &format!("{GRAPH}/me/events/{r}/{resp}"), Some(json!({ "sendResponse": true }))).await
+            }
+            ("CREATE_EVENT", _) => {
+                let cal = p["calendar"].as_str().unwrap_or_default();
+                call(Method::POST, &format!("{GRAPH}/me/calendars/{cal}/events"), Some(p["event"].clone())).await
+            }
+            ("DELETE_EVENT", Some(r)) => call(Method::DELETE, &format!("{GRAPH}/me/events/{r}"), None).await,
+            (_, None) => Ok((404, Value::Null)), // item no longer exists remotely
             _ => Ok((400, Value::Null)),
         };
 
@@ -234,6 +247,14 @@ pub async fn replay() -> Result<usize> {
                             db.execute("UPDATE messages SET remote_id=?1 WHERE id=?2", params![new_id, it.entity])?;
                         }
                     }
+                    if it.op == "CREATE_EVENT" {
+                        if let Some(new_id) = v["id"].as_str() {
+                            db.execute(
+                                "UPDATE calendar_events SET remote_id=?1, online_meeting_url=?2 WHERE id=?3",
+                                params![new_id, v["onlineMeeting"]["joinUrl"].as_str(), it.entity],
+                            )?;
+                        }
+                    }
                     let still_dirty: i64 = db.query_row(
                         "SELECT COUNT(*) FROM offline_mutation_queue WHERE local_entity_id=?1",
                         [&it.entity],
@@ -241,6 +262,7 @@ pub async fn replay() -> Result<usize> {
                     )?;
                     if still_dirty == 0 {
                         db.execute("UPDATE messages SET sync_status='SYNCED' WHERE id=?1", [&it.entity])?;
+                        db.execute("UPDATE calendar_events SET sync_status='SYNCED' WHERE id=?1", [&it.entity])?;
                     }
                     Ok(())
                 })?;

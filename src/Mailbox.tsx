@@ -6,6 +6,7 @@ import DOMPurify from "dompurify";
 import { DragBar, TrafficLights } from "./WindowControls";
 import Icon from "./Icon";
 import Compose, { ComposeInit } from "./Compose";
+import CalendarView, { Cal } from "./CalendarView";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 
@@ -84,8 +85,13 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   const [toast, setToast] = useState("");
   const [pending, setPending] = useState(0);
   const [moveOpen, setMoveOpen] = useState(false);
-  const view = useRef({ folderId: null as string | null, query: "" });
-  view.current = { folderId, query };
+  const [view, setView] = useState<"mail" | "calendar">("mail");
+  const [cals, setCals] = useState<Cal[]>([]);
+  const [hiddenCals, setHiddenCals] = useState<Set<string>>(() => { try { return new Set(JSON.parse(localStorage.getItem("hiddenCals") || "[]")); } catch { return new Set(); } });
+  useEffect(() => { try { localStorage.setItem("hiddenCals", JSON.stringify([...hiddenCals])); } catch { /* ignore */ } }, [hiddenCals]);
+  const loadCals = () => invoke<Cal[]>("list_calendars").then(setCals).catch(() => {});
+  const viewRef = useRef({ folderId: null as string | null, query: "" });
+  viewRef.current = { folderId, query };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -93,13 +99,14 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   }, [theme]);
 
   const loadFolders = async () => {
+    loadCals();
     const f = await invoke<Folder[]>("list_folders");
     setFolders(f);
     setFolderId((cur) => cur ?? f.find((x) => x.well_known === "inbox")?.id ?? f[0]?.id ?? null);
   };
 
   const loadMessages = async () => {
-    const { folderId, query } = view.current;
+    const { folderId, query } = viewRef.current;
     if (query.trim()) setMsgs(await invoke<Msg[]>("search_messages", { query }));
     else if (folderId) setMsgs(await invoke<Msg[]>("list_messages", { folderId, offset: 0, limit: PAGE }));
     invoke<number>("pending_actions").then(setPending).catch(() => {});
@@ -170,7 +177,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     setStatus("Syncing…");
     try {
       const r = await invoke<{ folders: number; messages_changed: number; bodies_downloaded: number }>("sync_now");
-      setStatus(`Synced · ${r.messages_changed} changes`);
+      setStatus(r.messages_changed ? `Synced · ${r.messages_changed} new` : "Up to date");
       await loadFolders();
       await loadMessages();
     } catch (e) {
@@ -243,16 +250,27 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     <div className="shell">
       <nav className="sidebar">
         <DragBar><TrafficLights /></DragBar>
+        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView(view === "calendar" ? "mail" : "calendar")}>
+          <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
+        </div>
         <div className="section">Mailboxes</div>
         <div className="folders">
           {folders.map((f) => (
-            <div key={f.id} className={`folder ${f.id === folderId && !query ? "active" : ""}`} onClick={() => { setQuery(""); setFolderId(f.id); setSelected(null); }}>
+            <div key={f.id} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
               <span className="ico"><Icon name={f.well_known ?? "folder"} /></span>
               <span className="name">{f.name}</span>
               {f.unread > 0 && <span className="count">{f.unread}</span>}
             </div>
           ))}
           {!folders.length && <div className="empty">No folders yet</div>}
+          {cals.length > 0 && <div className="section" style={{ padding: "14px 10px 4px" }}>Calendars</div>}
+          {cals.map((c) => (
+            <label key={c.id} className="folder calrow">
+              <input type="checkbox" checked={!hiddenCals.has(c.id)} style={{ accentColor: c.color }}
+                onChange={() => setHiddenCals((h) => { const n = new Set(h); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })} />
+              <span className="name">{c.name}</span>
+            </label>
+          ))}
         </div>
         <div className="account">
           <div className="avatar">{initials(account.display_name)}</div>
@@ -264,6 +282,8 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
         </div>
       </nav>
 
+      {view === "calendar" && <CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} />}
+      {view === "mail" && <>
       <section className="list">
         <div className="toolbar" data-tauri-drag-region>
           <div className="title" data-tauri-drag-region>
@@ -360,6 +380,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
           <div className="empty">No message selected</div>
         )}
       </section>
+      </>}
       {compose && (
         <Compose init={compose} onClose={() => setCompose(null)}
           onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); invoke<number>("pending_actions").then(setPending); }} />

@@ -21,6 +21,7 @@ const P: Record<string, string> = {
   forward: "M14 8l6 5-6 5M20 13H10a6 6 0 0 0-6 6",
   trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
   move: "M3 6h6l2 2h10v11H3zM10 13h6M13 10l3 3-3 3",
+  calendar: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5",
   unread: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
 };
 

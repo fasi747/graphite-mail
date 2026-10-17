@@ -11,7 +11,7 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 | 5 | 3-pane UI (virtualized list, sandboxed HTML reader, light/dark), offline search | done |
 | **6** | **50% checkpoint — .deb for Faisal to test on Ubuntu** | passed |
 | 7 | Offline mutation queue: read/flag/move/delete, compose/send/drafts, replay-before-pull | built – awaiting test |
-| 8 | Calendar: calendarView delta, month/week views, RSVP, TZ mapping | |
+| 8 | Calendar: calendarView delta, month/week views, RSVP, TZ mapping | built – awaiting test |
 | 9 | Crash-safe data-folder migration (7-phase) | |
 | 10 | Linux release: .deb + AppImage, icon, user guide | |
 | 11 | (optional) Windows build | |

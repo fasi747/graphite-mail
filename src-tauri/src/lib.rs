@@ -1,5 +1,6 @@
 mod storage;
 mod auth;
+mod calendar;
 mod mail;
 mod outbox;
 mod sync;
@@ -112,6 +113,37 @@ fn pending_actions() -> CmdResult<i64> {
     outbox::pending_count().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn list_calendars() -> CmdResult<Vec<calendar::Calendar>> {
+    calendar::calendars().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_events(start: i64, end: i64) -> CmdResult<Vec<calendar::Event>> {
+    calendar::events(start, end).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rsvp_event(id: String, response: String) -> CmdResult<()> {
+    calendar::rsvp(&id, &response).map_err(|e| e.to_string())?;
+    let _ = outbox::replay().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn create_event(event: calendar::NewEvent) -> CmdResult<String> {
+    let id = calendar::create(event).map_err(|e| e.to_string())?;
+    let _ = outbox::replay().await;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn delete_event(id: String) -> CmdResult<()> {
+    calendar::delete(&id).map_err(|e| e.to_string())?;
+    let _ = outbox::replay().await;
+    Ok(())
+}
+
 /// Background loop: sync every 2 minutes while signed in; notify the UI after each pass.
 fn spawn_sync_loop(app: tauri::AppHandle) {
     use tauri::Emitter;
@@ -148,7 +180,12 @@ pub fn run() {
             move_message,
             delete_message,
             send_mail,
-            pending_actions
+            pending_actions,
+            list_calendars,
+            list_events,
+            rsvp_event,
+            create_event,
+            delete_event
         ])
         .setup(|app| {
             spawn_sync_loop(app.handle().clone());
