@@ -5,6 +5,9 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import DOMPurify from "dompurify";
 import { DragBar, TrafficLights } from "./WindowControls";
 import Icon from "./Icon";
+import Compose, { ComposeInit } from "./Compose";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 type Account = { email: string; display_name: string };
 type Folder = { id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null };
@@ -77,6 +80,12 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   );
   const [darkMail, setDarkMail] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
+  const [compose, setCompose] = useState<ComposeInit | null>(null);
+  const [toast, setToast] = useState("");
+  const [pending, setPending] = useState(0);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const view = useRef({ folderId: null as string | null, query: "" });
+  view.current = { folderId, query };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -90,9 +99,71 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   };
 
   const loadMessages = async () => {
+    const { folderId, query } = view.current;
     if (query.trim()) setMsgs(await invoke<Msg[]>("search_messages", { query }));
     else if (folderId) setMsgs(await invoke<Msg[]>("list_messages", { folderId, offset: 0, limit: PAGE }));
+    invoke<number>("pending_actions").then(setPending).catch(() => {});
   };
+
+  const flash = (t: string) => { setToast(t); setTimeout(() => setToast(""), 2600); };
+  const patch = (id: string, p: Partial<Msg>) => {
+    setMsgs((ms) => ms.map((m) => (m.id === id ? { ...m, ...p } : m)));
+    setSelected((s) => (s && s.id === id ? { ...s, ...p } : s));
+  };
+  const removeFromList = (id: string) => {
+    const idx = msgs.findIndex((m) => m.id === id);
+    const next = msgs[idx + 1] ?? msgs[idx - 1];
+    setMsgs((ms) => ms.filter((m) => m.id !== id));
+    if (next) open(next); else setSelected(null);
+  };
+  const act = async (fn: () => Promise<unknown>, after?: () => void) => {
+    try { await fn(); after?.(); loadFolders(); invoke<number>("pending_actions").then(setPending); }
+    catch (e) { flash(String(e)); }
+  };
+  const toggleRead = (m: Msg) => act(() => invoke("set_read", { id: m.id, read: !m.is_read }), () => patch(m.id, { is_read: !m.is_read }));
+  const toggleFlag = (m: Msg) => act(() => invoke("set_flag", { id: m.id, flagged: !m.is_flagged }), () => patch(m.id, { is_flagged: !m.is_flagged }));
+  const del = async (m: Msg) => {
+    const inTrash = folders.find((f) => f.id === folderId)?.well_known === "deleteditems";
+    if (inTrash && !(await ask("Permanently delete this message? This can't be undone.", { title: "Delete message", kind: "warning" }))) return;
+    act(() => invoke("delete_message", { id: m.id }), () => removeFromList(m.id));
+  };
+  const moveTo = (m: Msg, f: Folder) => { setMoveOpen(false); act(() => invoke("move_message", { id: m.id, folderId: f.id }), () => { removeFromList(m.id); flash(`Moved to ${f.name}`); }); };
+
+  const addrs = (json: string | null) => { try { return (JSON.parse(json || "[]") as { address?: string }[]).map((p) => p.address!).filter(Boolean); } catch { return []; } };
+  const startCompose = (mode: ComposeInit["mode"]) => {
+    if (mode === "new" || !selected) return setCompose({ mode: "new" });
+    const s = selected;
+    const me = account.email.toLowerCase();
+    const header = `On ${new Date(s.received_at * 1000).toLocaleString()}, ${s.sender_name ?? ""} &lt;${s.sender_address ?? ""}&gt; wrote:`;
+    const subj = s.subject ?? "";
+    const base = { replyTo: s.id, quoteHtml: s.body_html ?? "", quoteHeader: header };
+    if (mode === "forward") return setCompose({ ...base, mode, subject: /^fw(d)?:/i.test(subj) ? subj : `Fw: ${subj}` });
+    const re = /^re:/i.test(subj) ? subj : `Re: ${subj}`;
+    const to = [s.sender_address ?? ""].filter(Boolean);
+    if (mode === "reply") return setCompose({ ...base, mode, to, subject: re });
+    const others = [...addrs(s.to_json), ...addrs(s.cc_json)].filter((a) => a.toLowerCase() !== me && !to.includes(a));
+    setCompose({ ...base, mode, to, cc: others, subject: re });
+  };
+
+  // Keyboard shortcuts (ignored while typing)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (compose || t.tagName === "INPUT" || t.isContentEditable) return;
+      const idx = selected ? msgs.findIndex((m) => m.id === selected.id) : -1;
+      if (e.key === "ArrowDown" && msgs[idx + 1]) { e.preventDefault(); open(msgs[idx + 1]); }
+      else if (e.key === "ArrowUp" && idx > 0) { e.preventDefault(); open(msgs[idx - 1]); }
+      else if (!selected) { if ((e.ctrlKey || e.metaKey) && e.key === "n") setCompose({ mode: "new" }); }
+      else if (e.key === "Delete") del(selected);
+      else if ((e.ctrlKey || e.metaKey) && e.key === "n") setCompose({ mode: "new" });
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "r") startCompose("replyAll");
+      else if ((e.ctrlKey || e.metaKey) && e.key === "r") { e.preventDefault(); startCompose("reply"); }
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") startCompose("forward");
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "u") toggleRead(selected);
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  });
 
   const syncNow = async () => {
     setSyncing(true);
@@ -138,7 +209,26 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
 
   const open = async (m: Msg) => {
     setAllowRemote(false);
-    setSelected(await invoke<Detail>("get_message", { id: m.id }));
+    setMoveOpen(false);
+    const d = await invoke<Detail>("get_message", { id: m.id });
+    setSelected(d);
+    if (!m.is_read) {
+      invoke("set_read", { id: m.id, read: true }).then(() => { patch(m.id, { is_read: true }); loadFolders(); }).catch(() => {});
+    }
+  };
+
+  // Open links from emails in the system browser instead of inside the app.
+  const hookLinks = (frame: HTMLIFrameElement | null) => {
+    const doc = frame?.contentDocument;
+    if (!doc) return;
+    doc.addEventListener("click", (ev) => {
+      const a = (ev.target as HTMLElement).closest("a");
+      if (!a) return;
+      ev.preventDefault();
+      const href = a.getAttribute("href") ?? "";
+      if (/^mailto:/i.test(href)) setCompose({ mode: "new", to: [decodeURIComponent(href.slice(7).split("?")[0])] });
+      else if (/^https?:/i.test(href)) openUrl(href).catch((e) => flash(String(e)));
+    });
   };
 
   const rendered = useMemo(
@@ -168,7 +258,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
           <div className="avatar">{initials(account.display_name)}</div>
           <div className="who">
             <div>{account.display_name}</div>
-            <div className="muted"><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}</div>
+            <div className="muted"><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}{pending > 0 ? ` · ${pending} waiting to sync` : ""}</div>
           </div>
           <button className="icon" onClick={onSignOut} title="Sign out"><Icon name="signout" /></button>
         </div>
@@ -180,6 +270,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
             <b>{query ? "Search" : current?.name ?? "Mail"}</b>
             <span>{query ? `${msgs.length} results` : current ? `${current.total} messages${current.unread ? `, ${current.unread} unread` : ""}` : ""}</span>
           </div>
+          <button className="icon" onClick={() => setCompose({ mode: "new" })} title="New message (Ctrl+N)"><Icon name="compose" /></button>
           <button className="icon" onClick={syncNow} disabled={syncing || !online} title="Get new mail"><span className={syncing ? "spin" : ""}><Icon name="refresh" /></span></button>
         </div>
         <div className="search">
@@ -212,6 +303,26 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       <section className="reader">
         <div className="toolbar" data-tauri-drag-region>
           <div className="title" data-tauri-drag-region />
+          {selected && (
+            <div className="actions">
+              <button className="icon" onClick={() => startCompose("reply")} title="Reply (Ctrl+R)"><Icon name="reply" /></button>
+              <button className="icon" onClick={() => startCompose("replyAll")} title="Reply all (Ctrl+Shift+R)"><Icon name="replyall" /></button>
+              <button className="icon" onClick={() => startCompose("forward")} title="Forward (Ctrl+Shift+F)"><Icon name="forward" /></button>
+              <span style={{ width: 8 }} />
+              <button className="icon" onClick={() => toggleRead(selected)} title={selected.is_read ? "Mark as unread" : "Mark as read"}><Icon name="unread" /></button>
+              <button className="icon" onClick={() => toggleFlag(selected)} title={selected.is_flagged ? "Unflag" : "Flag"} style={selected.is_flagged ? { color: "#ff9f0a" } : undefined}><Icon name="flag" /></button>
+              <span style={{ position: "relative" }}>
+                <button className="icon" onClick={() => setMoveOpen(!moveOpen)} title="Move to folder"><Icon name="move" /></button>
+                {moveOpen && (
+                  <div className="menu">
+                    {folders.filter((f) => f.id !== folderId).map((f) => <div key={f.id} onClick={() => moveTo(selected, f)}>{f.name}</div>)}
+                  </div>
+                )}
+              </span>
+              <button className="icon" onClick={() => del(selected)} title="Delete (Del)"><Icon name="trash" /></button>
+              <span style={{ width: 8 }} />
+            </div>
+          )}
           {selected && theme === "dark" && (
             <button className="icon" onClick={() => setDarkMail(!darkMail)} title={darkMail ? "Show email in light mode" : "Show email in dark mode"}><Icon name={darkMail ? "sun" : "moon"} /></button>
           )}
@@ -239,7 +350,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
             )}
             {rendered ? (
               <div className="bodywrap">
-                <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={rendered.doc} title="message" />
+                <iframe sandbox="allow-same-origin" srcDoc={rendered.doc} title="message" onLoad={(e) => hookLinks(e.currentTarget)} />
               </div>
             ) : (
               <div className="empty">This message hasn't been downloaded for offline reading yet. It will appear after the next sync.</div>
@@ -249,6 +360,11 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
           <div className="empty">No message selected</div>
         )}
       </section>
+      {compose && (
+        <Compose init={compose} onClose={() => setCompose(null)}
+          onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); invoke<number>("pending_actions").then(setPending); }} />
+      )}
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

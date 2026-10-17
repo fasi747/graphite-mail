@@ -5,12 +5,12 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 | # | Milestone | Status |
 |---|-----------|--------|
 | 1 | Scaffold Tauri/React, Linux deps, .deb build pipeline | done |
-| 2 | OAuth2 PKCE (loopback) + tokens in GNOME Keyring | built (live test at M6) |
+| 2 | OAuth2 PKCE (loopback) + tokens in GNOME Keyring | done |
 | 3 | First-run wizard: choose data folder, bootstrap.json, SQLite schema + FTS5 | done |
 | 4 | Graph folder + message delta sync, body/attachment hydration (CAS blobs) | done |
 | 5 | 3-pane UI (virtualized list, sandboxed HTML reader, light/dark), offline search | done |
-| **6** | **50% checkpoint — .deb for Faisal to test on Ubuntu** | awaiting test |
-| 7 | Offline mutation queue: read/flag/move/delete, compose/send/drafts, replay-before-pull | |
+| **6** | **50% checkpoint — .deb for Faisal to test on Ubuntu** | passed |
+| 7 | Offline mutation queue: read/flag/move/delete, compose/send/drafts, replay-before-pull | built – awaiting test |
 | 8 | Calendar: calendarView delta, month/week views, RSVP, TZ mapping | |
 | 9 | Crash-safe data-folder migration (7-phase) | |
 | 10 | Linux release: .deb + AppImage, icon, user guide | |

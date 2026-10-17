@@ -1,6 +1,7 @@
 mod storage;
 mod auth;
 mod mail;
+mod outbox;
 mod sync;
 
 use auth::Account;
@@ -79,12 +80,44 @@ fn search_messages(query: String) -> CmdResult<Vec<mail::MessageRow>> {
     mail::search(&query, 200).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn set_read(id: String, read: bool) -> CmdResult<()> {
+    outbox::set_read(&id, read).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_flag(id: String, flagged: bool) -> CmdResult<()> {
+    outbox::set_flag(&id, flagged).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn move_message(id: String, folder_id: String) -> CmdResult<()> {
+    outbox::move_to(&id, &folder_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_message(id: String) -> CmdResult<()> {
+    outbox::delete(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn send_mail(draft: outbox::Draft) -> CmdResult<bool> {
+    outbox::send(draft).map_err(|e| e.to_string())?;
+    // Try to send right away; if offline it stays queued for the next sync.
+    Ok(outbox::replay().await.is_ok())
+}
+
+#[tauri::command]
+fn pending_actions() -> CmdResult<i64> {
+    outbox::pending_count().map_err(|e| e.to_string())
+}
+
 /// Background loop: sync every 2 minutes while signed in; notify the UI after each pass.
 fn spawn_sync_loop(app: tauri::AppHandle) {
     use tauri::Emitter;
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             if auth::current_account().is_some() && storage::read_bootstrap().is_some() {
                 let res = sync::sync_all().await.map_err(|e| e.to_string());
                 let _ = app.emit("sync-finished", res.is_ok());
@@ -109,7 +142,13 @@ pub fn run() {
             list_folders,
             list_messages,
             get_message,
-            search_messages
+            search_messages,
+            set_read,
+            set_flag,
+            move_message,
+            delete_message,
+            send_mail,
+            pending_actions
         ])
         .setup(|app| {
             spawn_sync_loop(app.handle().clone());

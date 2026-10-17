@@ -1533,6 +1533,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphite-mail"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "chrono",
+ "dirs",
+ "keyring",
+ "rand 0.10.3",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2541,30 +2565,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "o365mail"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "chrono",
- "dirs",
- "keyring",
- "rand 0.10.3",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
- "url",
- "uuid",
 ]
 
 [[package]]

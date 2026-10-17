@@ -15,6 +15,13 @@ const P: Record<string, string> = {
   appearance: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18",
   paperclip: "M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7",
   flag: "M5 21V4M5 4h11l-2 4 2 4H5",
+  compose: "M12 4H5v15h15v-7M18 3l3 3-9 9H9v-3z",
+  reply: "M10 8L4 13l6 5M4 13h10a6 6 0 0 1 6 6",
+  replyall: "M13 8l-6 5 6 5M8 8l-6 5 6 5M7 13h7a6 6 0 0 1 6 6",
+  forward: "M14 8l6 5-6 5M20 13H10a6 6 0 0 0-6 6",
+  trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
+  move: "M3 6h6l2 2h10v11H3zM10 13h6M13 10l3 3-3 3",
+  unread: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
 };
 
 export default function Icon({ name, size = 16 }: { name: string; size?: number }) {

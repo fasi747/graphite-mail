@@ -53,6 +53,7 @@ pub struct SyncReport {
     pub folders: usize,
     pub messages_changed: usize,
     pub bodies_downloaded: usize,
+    pub replayed: usize,
 }
 
 /// Full sync pass: folders → message deltas → bodies.
@@ -60,6 +61,8 @@ pub async fn sync_all() -> Result<SyncReport> {
     let acc = auth::current_account().ok_or(anyhow!("Not signed in"))?;
     let account_id = ensure_account(&acc)?;
     let mut rep = SyncReport::default();
+    // Replay offline actions before pulling, so server state never overwrites local changes.
+    rep.replayed = crate::outbox::replay().await.unwrap_or(0);
     rep.folders = sync_folders(&account_id).await?;
 
     let folders: Vec<(String, String, Option<String>)> = storage::with_db(|db| {
