@@ -352,8 +352,20 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
         <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
           <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
         </div>
-        <div className="section">Mailboxes</div>
         <div className="folders">
+          {view === "calendar" && cals.length > 0 && <div className="section" style={{ padding: "6px 10px 4px" }}>My calendars <span style={{ fontWeight: 400 }}>· tick to show</span></div>}
+          {view === "calendar" && cals.map((c, i) => (
+            <React.Fragment key={c.id}>
+            {multi && (i === 0 || cals[i - 1].account_email !== c.account_email) && <div className="muted acct-sub">{accounts.find((a) => a.email.toLowerCase() === c.account_email.toLowerCase())?.display_name ?? c.account_email}</div>}
+            <div className="folder calrow" onClick={() => setView("calendar")} title="Open calendar">
+              <input type="checkbox" checked={!hiddenCals.has(c.id)} style={{ accentColor: c.color }} title="Show or hide this calendar"
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => setHiddenCals((h) => { const n = new Set(h); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })} />
+              <span className="name">{c.name}</span>
+            </div>
+            </React.Fragment>
+          ))}
+          <div className="section" style={{ padding: "14px 10px 4px" }}>Mailboxes</div>
           {multi && (
             <div className={`folder ${folderId === ALL && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(ALL); setSelected(null); }}>
               <span className="ico"><Icon name="inbox" /></span>
@@ -381,18 +393,6 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
             );
           })}
           {!folders.length && <div className="empty">No folders yet</div>}
-          {cals.length > 0 && <div className="section" style={{ padding: "14px 10px 4px" }}>Calendars</div>}
-          {cals.map((c, i) => (
-            <React.Fragment key={c.id}>
-            {multi && (i === 0 || cals[i - 1].account_email !== c.account_email) && <div className="muted acct-sub">{accounts.find((a) => a.email.toLowerCase() === c.account_email.toLowerCase())?.display_name ?? c.account_email}</div>}
-            <div className="folder calrow" onClick={() => setView("calendar")} title="Open calendar">
-              <input type="checkbox" checked={!hiddenCals.has(c.id)} style={{ accentColor: c.color }} title="Show or hide this calendar"
-                onClick={(e) => e.stopPropagation()}
-                onChange={() => setHiddenCals((h) => { const n = new Set(h); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })} />
-              <span className="name">{c.name}</span>
-            </div>
-            </React.Fragment>
-          ))}
         </div>
         <div className="account">
           <div className="avatar">{multi ? String(accounts.length) : initials(accounts[0]?.display_name ?? _first.display_name)}</div>

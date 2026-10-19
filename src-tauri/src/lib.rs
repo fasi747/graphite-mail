@@ -320,7 +320,7 @@ fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
 /// The UI has drawn its first screen; the splash may hand over to the main window.
 static UI_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// How long the splash animation (public/splash.html) runs.
-const SPLASH_MS: u64 = 3400;
+const SPLASH_MS: u64 = 5100;
 
 #[tauri::command]
 fn app_ready() {
