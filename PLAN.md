@@ -23,4 +23,4 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Multi-account backend (per-account keyring tokens, sync, queue, All Inboxes)
 - [x] Multi-account UI (grouped sidebar, From picker, add/remove account, New Folder per account)
 - [x] Gmail: sign-in (desktop client, PKCE), labels → folders, history-based sync, send/reply, star/read/move/trash, Google Calendar
-- [ ] Gmail tested with a real account (needs the Google OAuth client ID)
+- [ ] Gmail tested with a real account (client ID added in 1.2.1)

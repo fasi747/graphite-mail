@@ -23,8 +23,12 @@ const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/gmail
 
 /// OAuth client of type "Desktop app". Google does not treat a desktop client's secret as confidential.
 /// Can be overridden at run time with GRAPHITE_GOOGLE_CLIENT_ID / GRAPHITE_GOOGLE_CLIENT_SECRET.
-const CLIENT_ID: &str = "";
-const CLIENT_SECRET: &str = "";
+const CLIENT_ID: &str = "860043772140-ko3lhq0vup2e4v3h5lirjj4uh7t3nlgm.apps.googleusercontent.com";
+/// Not stored in the repository: supply it when building (GRAPHITE_GOOGLE_CLIENT_SECRET=... npx tauri build).
+const CLIENT_SECRET: &str = match option_env!("GRAPHITE_GOOGLE_CLIENT_SECRET") {
+    Some(s) => s,
+    None => "",
+};
 
 /// First sync: how far back, and at most how many messages, to download.
 const INITIAL_DAYS: i64 = 90;
