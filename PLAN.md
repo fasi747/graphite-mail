@@ -43,3 +43,9 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Signature per account (new, reply, forward; follows the From account)
 - [x] Drafts saved on this computer (autosave, save-on-cancel, Drafts list)
 - [x] Larger minimise / maximise / close buttons
+
+## v1.7 — security review fixes
+- [x] Google client secret removed from the source (build-time env var or untracked `google_oauth.json`); tests guard against it coming back
+- [x] Strict Content-Security-Policy (production) + dev policy; links leave the email frame as refused new-window requests
+- [x] Links: only http, https and mailto are acted on (`links.rs`, unit-tested for every dangerous scheme)
+- [x] Capabilities trimmed to what the UI uses (no `opener:default`, no `notification:default`, no `core:default`); test keeps them exact

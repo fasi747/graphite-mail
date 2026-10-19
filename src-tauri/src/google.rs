@@ -21,18 +21,21 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar";
 
-/// OAuth client of type "Desktop app". Google does not treat a desktop client's secret as confidential.
-/// Can be overridden at run time with GRAPHITE_GOOGLE_CLIENT_ID / GRAPHITE_GOOGLE_CLIENT_SECRET.
-const CLIENT_ID: &str = "860043772140-ko3lhq0vup2e4v3h5lirjj4uh7t3nlgm.apps.googleusercontent.com";
-/// Not stored in the repository: supply it when building (GRAPHITE_GOOGLE_CLIENT_SECRET=... npx tauri build).
+/// OAuth client of type "Desktop app". Both values are fixed at build time (build.rs) from the environment or the
+/// untracked file src-tauri/google_oauth.json; the secret is never in the source. They can still be overridden at
+/// run time with GRAPHITE_GOOGLE_CLIENT_ID / GRAPHITE_GOOGLE_CLIENT_SECRET (handy for development).
+const CLIENT_ID: &str = match option_env!("GRAPHITE_GOOGLE_CLIENT_ID") {
+    Some(id) => id,
+    None => "860043772140-ko3lhq0vup2e4v3h5lirjj4uh7t3nlgm.apps.googleusercontent.com",
+};
 const CLIENT_SECRET: &str = match option_env!("GRAPHITE_GOOGLE_CLIENT_SECRET") {
     Some(s) => s,
     None => "",
 };
 
-/// First sync: how far back, and at most how many messages, to download.
 const FILTERS_SCOPE: &str = "https://www.googleapis.com/auth/gmail.settings.basic";
 
+/// First sync: how far back, and at most how many messages, to download.
 const INITIAL_DAYS: i64 = 90;
 const INITIAL_MAX: usize = 3000;
 const PAST_DAYS: i64 = 90;
@@ -67,13 +70,18 @@ pub(crate) fn url(base: &str, segs: &[&str], q: &[(&str, &str)]) -> String {
     u.to_string()
 }
 
-fn client() -> Result<(String, String)> {
-    let pick = |var: &str, fallback: &str| std::env::var(var).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| fallback.to_string());
-    let (id, secret) = (pick("GRAPHITE_GOOGLE_CLIENT_ID", CLIENT_ID), pick("GRAPHITE_GOOGLE_CLIENT_SECRET", CLIENT_SECRET));
-    if id.is_empty() {
-        bail!("Google sign-in isn't set up in this version of Graphite Mail yet.");
+/// Which OAuth client to use: run-time environment first, then what was built in. Both id and secret are required.
+fn resolve_client(env_id: Option<String>, env_secret: Option<String>, built_id: &str, built_secret: &str) -> Result<(String, String)> {
+    let pick = |env: Option<String>, built: &str| env.filter(|s| !s.is_empty()).unwrap_or_else(|| built.to_string());
+    let (id, secret) = (pick(env_id, built_id), pick(env_secret, built_secret));
+    if id.is_empty() || secret.is_empty() {
+        bail!("Google sign-in isn't set up in this build of Graphite Mail (the Google client secret is missing).");
     }
     Ok((id, secret))
+}
+
+fn client() -> Result<(String, String)> {
+    resolve_client(std::env::var("GRAPHITE_GOOGLE_CLIENT_ID").ok(), std::env::var("GRAPHITE_GOOGLE_CLIENT_SECRET").ok(), CLIENT_ID, CLIENT_SECRET)
 }
 
 // ---------------------------------------------------------------- sign-in
@@ -1558,5 +1566,14 @@ pub(crate) mod tests {
         let _ = sub;
         let orphan_folder: String = storage::with_db(|db| Ok(db.query_row("SELECT f.display_name FROM messages m JOIN folders f ON f.id=m.folder_id WHERE m.remote_id='m3'", [], |r| r.get(0))?)).unwrap();
         assert_eq!(orphan_folder, "Archive", "mail from a deleted label stays, in Archive");
+    }
+
+    #[test]
+    fn google_client_settings_come_from_outside_the_source() {
+        // run-time values win; both id and secret must exist
+        assert_eq!(resolve_client(None, Some("S".into()), "ID", "").unwrap(), ("ID".into(), "S".into()));
+        assert_eq!(resolve_client(Some("E".into()), None, "ID", "built").unwrap(), ("E".into(), "built".into()));
+        assert!(resolve_client(None, None, "ID", "").unwrap_err().to_string().contains("secret is missing"));
+        assert!(resolve_client(Some(String::new()), Some(String::new()), "", "").is_err());
     }
 }

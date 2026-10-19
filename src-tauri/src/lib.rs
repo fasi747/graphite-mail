@@ -5,12 +5,15 @@ mod calendar;
 mod folders;
 mod google;
 mod http;
+mod links;
 mod mail;
 mod notify;
 mod migrate;
 mod outbox;
 mod rules;
 mod storage;
+#[cfg(test)]
+mod security_tests;
 mod sync;
 
 use auth::Account;
@@ -314,13 +317,12 @@ async fn delete_event(id: String) -> CmdResult<()> {
     Ok(())
 }
 
+/// Opens a web link in the system browser (used by the UI, e.g. "Join meeting"). Only http/https are accepted.
 #[tauri::command]
 fn open_link(app: tauri::AppHandle, url: String) -> CmdResult<()> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err("Only web links can be opened".into());
-    }
-    eprintln!("[graphite] opening link: {url}");
-    app.opener().open_url(url, None::<&str>).map_err(|e| {
+    let u = links::external(&url)?;
+    eprintln!("[graphite] opening link: {u}");
+    app.opener().open_url(u.as_str(), None::<&str>).map_err(|e| {
         eprintln!("[graphite] open_link failed: {e}");
         e.to_string()
     })
@@ -329,36 +331,41 @@ fn open_link(app: tauri::AppHandle, url: String) -> CmdResult<()> {
 /// Decides every navigation request of the app window (including those from the email frame).
 /// Web links open in the system browser; mailto: links start a new message; the app itself loads normally.
 /// This runs inside the web engine, so it works even though scripts are switched off inside emails.
-fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
+fn handle_link(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
     use tauri::Emitter;
-    match url.scheme() {
-        "about" | "tauri" | "ipc" | "asset" => true,
-        "http" | "https" => {
-            // The app itself: the dev server (development builds only) or bundled files (Windows-style host names).
-            let own = matches!(
-                url.host_str(),
-                Some("tauri.localhost" | "ipc.localhost" | "asset.localhost")
-            ) || (cfg!(dev) && matches!(url.host_str(), Some("localhost" | "127.0.0.1")));
-            if own {
-                return true;
-            }
-            let (app, url) = (app.clone(), url.to_string());
+    match links::classify(url, cfg!(dev)) {
+        links::Action::Allow => true,
+        links::Action::OpenExternal(target) => {
+            let app = app.clone();
             // Off the UI thread, so a slow browser start can never freeze the window.
             std::thread::spawn(move || {
-                eprintln!("[graphite] opening link: {url}");
-                if let Err(e) = app.opener().open_url(&url, None::<&str>) {
+                eprintln!("[graphite] opening link: {target}");
+                if let Err(e) = app.opener().open_url(&target, None::<&str>) {
                     eprintln!("[graphite] could not open link: {e}");
-                    let _ = app.emit("link-failed", url);
+                    let _ = app.emit("link-failed", target);
                 }
             });
             false
         }
-        "mailto" => {
-            let _ = app.emit("mailto", url.to_string());
+        links::Action::Compose(address) => {
+            let _ = app.emit("mailto", address);
             false
         }
-        _ => false,
+        links::Action::Deny => {
+            eprintln!("[graphite] blocked a link: {}", url.scheme());
+            false
+        }
     }
+}
+
+fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
+    handle_link(app, url)
+}
+
+/// A link in an email asks for a new window: never open one, hand the address to the same checks instead.
+fn new_window_request(app: &tauri::AppHandle, url: tauri::Url) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    let _ = handle_link(app, &url);
+    tauri::webview::NewWindowResponse::Deny
 }
 
 /// The UI has drawn its first screen; the splash may hand over to the main window.
@@ -475,11 +482,13 @@ pub fn run() {
         .setup(|app| {
             attachments::clear_temp();
             let handle = app.handle().clone();
+            let handle2 = app.handle().clone();
             let cfg = app.config().app.windows[0].clone();
             // The main window loads in the background, hidden, while the splash animation plays.
             let main = tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
                 .visible(false)
                 .on_navigation(move |url| allow_navigation(&handle, url))
+                .on_new_window(move |url, _features| new_window_request(&handle2, url))
                 .build()?;
             match tauri::WebviewWindowBuilder::new(app, "splash", tauri::WebviewUrl::App("splash.html".into()))
                 .title("Graphite Mail")

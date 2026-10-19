@@ -10,7 +10,7 @@ Use a throwaway Microsoft 365 user and a throwaway Gmail account. Rules, bulk ac
 ## Known limitations (no need to report)
 - The local database is **not encrypted** (SQLCipher is planned). Tokens are in the OS keyring.
 - The package is **not signed**; no auto-update.
-- The Google OAuth client secret is built into the app (normal for desktop clients, still please comment).
+- Test builds are made **without** the Google client secret (Gmail sign-in is then disabled unless a test client is supplied).
 - Drafts are local only; Gmail forward/attachment limits (15 MB total); Gmail "delete forever" does nothing (30-day Trash).
 - Windows is not supported yet.
 
@@ -41,7 +41,7 @@ Use a throwaway Microsoft 365 user and a throwaway Gmail account. Rules, bulk ac
 - Tracking pixels and read-receipts while "remote content" is blocked.
 
 **App hardening**
-- Tauri configuration: CSP is currently not set (known) — assess impact; capabilities/permissions; which commands the web content can call; `opener` and `dialog` scope; navigation handler (`on_navigation`) bypasses.
+- Tauri configuration: a strict CSP is set (`default-src 'self'; img-src 'self' data: blob: https:; …`) — try to bypass it; capabilities are trimmed to event listening, the window buttons and file dialogs; link handling allows only http/https/mailto (`links.rs`) and email links are routed through a refused new-window request — try to bypass `on_navigation` / `on_new_window`, and to reach IPC commands from email content.
 - Local files: permissions of the data folder, database and blobs (world-readable?), temp files for opened attachments (`/tmp/graphite-mail-attachments`), file-name handling (path traversal, symlinks), "Save as" overwrite behaviour.
 - Dangerous file handling: executables/scripts must never be run by "Open".
 - SQL injection (search, rules, folder names), FTS query injection, path injection in the data-folder move, JSON/IPC argument validation, integer/size limits.

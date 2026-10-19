@@ -5,6 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 const report = (m: string) => { try { invoke("log_js", { message: m }); } catch { /* ignore */ } };
 window.addEventListener("error", (e) => report(`${e.message} @ ${e.filename}:${e.lineno}`));
+// A blocked resource (content-security-policy) is reported to the terminal, so a break is noticed at once.
+document.addEventListener("securitypolicyviolation", (e) => report(`CSP blocked ${e.violatedDirective}: ${e.blockedURI} (${e.sourceFile ?? "page"}:${e.lineNumber})`));
 window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reason}`));
 
 class Boundary extends React.Component<{ children: React.ReactNode }, { err: string | null }> {

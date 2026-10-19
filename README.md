@@ -38,6 +38,10 @@ New to Graphite Mail? Read the **[User Guide](docs/USER-GUIDE.md)**.
 
 Needs Node 20+, Rust, and on Ubuntu: `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev libsecret-1-dev patchelf`.
 
+Gmail sign-in needs your own Google OAuth "Desktop app" client. Put it in the untracked file `src-tauri/google_oauth.json`
+(copy `src-tauri/google_oauth.example.json`) or set `GRAPHITE_GOOGLE_CLIENT_ID` / `GRAPHITE_GOOGLE_CLIENT_SECRET` when building.
+Without it the app builds and works, but "Add Google account" says it isn't set up.
+
 ```
 npm ci
 npm run tauri build        # .deb and .AppImage in src-tauri/target/release/bundle/

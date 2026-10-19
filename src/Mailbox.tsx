@@ -59,8 +59,9 @@ function buildDoc(html: string, allowRemote: boolean, dark: boolean) {
   DOMPurify.removeAllHooks();
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     if (node.tagName === "A") {
-      // A click navigates the email frame; the app (Rust side) intercepts that and opens the system browser.
-      node.setAttribute("target", "_self");
+      // A click asks for a new window; the app (Rust side) refuses the window and opens the system browser instead.
+      // (Navigating the frame itself would be blocked by the content-security-policy, frame-src 'self'.)
+      node.setAttribute("target", "_blank");
       node.setAttribute("rel", "noopener noreferrer");
     }
     if (!allowRemote) {
@@ -275,10 +276,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       loadFolders(); loadMessages();
     });
     // Links clicked inside an email are handled by the app shell (Rust) and reported here.
-    const un2 = listen<string>("mailto", (e) => {
-      const to = decodeURIComponent(e.payload.slice(7).split("?")[0]);
-      setCompose({ mode: "new", to: to ? [to] : [] });
-    });
+    const un2 = listen<string>("mailto", (e) => setCompose({ mode: "new", to: e.payload ? [e.payload] : [] }));
     const un3 = listen<string>("link-failed", () => flash("Couldn't open the link in your web browser."));
     const on = () => setOnline(true), off = () => setOnline(false);
     addEventListener("online", on);
@@ -570,7 +568,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
             )}
             {rendered ? (
               <div className="bodywrap">
-                <iframe sandbox="allow-same-origin" srcDoc={rendered.doc} title="message" />
+                <iframe sandbox="allow-same-origin allow-popups" srcDoc={rendered.doc} title="message" />
               </div>
             ) : (
               <div className="empty">This message hasn't been downloaded for offline reading yet. It will appear after the next sync.</div>
