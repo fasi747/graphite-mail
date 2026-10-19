@@ -17,12 +17,13 @@ export default function Settings({ accounts, onClose, onAccountsChanged }: { acc
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [notifs, setNotifs] = useState(true);
-  const [sigAcct, setSigAcct] = useState(accounts[0]?.email ?? "");
-  const [sig, setSig] = useState("");
-  const [sigSaved, setSigSaved] = useState(false);
-  useEffect(() => { if (sigAcct) invoke<string>("get_signature", { email: sigAcct }).then((s) => { setSig(s); setSigSaved(false); }).catch(() => {}); }, [sigAcct]);
-  async function saveSig() {
-    try { await invoke("set_signature", { email: sigAcct, text: sig }); setSigSaved(true); } catch (e) { setError(String(e)); }
+  const [sigs, setSigs] = useState<Record<string, string>>({});
+  const [sigSaved, setSigSaved] = useState<string>("");
+  useEffect(() => {
+    accounts.forEach((a) => invoke<string>("get_signature", { email: a.email }).then((t) => setSigs((m) => ({ ...m, [a.email]: t }))).catch(() => {}));
+  }, [accounts.map((a) => a.email).join(",")]);
+  async function saveSig(email: string) {
+    try { await invoke("set_signature", { email, text: sigs[email] ?? "" }); setSigSaved(email); } catch (e) { setError(String(e)); }
   }
   useEffect(() => { invoke<boolean>("get_notifications").then(setNotifs).catch(() => {}); }, []);
   const toggleNotifs = async (on: boolean) => {
@@ -96,17 +97,20 @@ export default function Settings({ accounts, onClose, onAccountsChanged }: { acc
             <button disabled={!!adding || !!moving} onClick={() => add("google")}>{adding === "google" ? "Waiting for browser…" : "Add Google account"}</button>
           </div>
           {adding && <div className="muted" style={{ fontSize: 12 }}>Finish signing in in your web browser, then come back here.</div>}
-          <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>SIGNATURE</div>
-          {accounts.length > 1 && (
-            <select value={sigAcct} onChange={(e) => setSigAcct(e.target.value)}>
-              {accounts.map((a) => <option key={a.email} value={a.email}>{a.display_name} ({a.email})</option>)}
-            </select>
-          )}
-          <textarea rows={4} placeholder={"Best regards,\nYour name"} value={sig} onChange={(e) => { setSig(e.target.value); setSigSaved(false); }} style={{ width: "100%", resize: "vertical", userSelect: "text" }} />
-          <div className="rowbtns" style={{ alignItems: "center" }}>
-            <button onClick={saveSig}>Save signature</button>
-            {sigSaved && <span style={{ color: "#30a46c", fontSize: 12.5 }}>Saved. It is added to new messages, replies and forwards from this account.</span>}
-          </div>
+          <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>SIGNATURES</div>
+          <div className="muted" style={{ fontSize: 12 }}>Each account has its own signature. It is added to new messages, replies and forwards sent from that account.</div>
+          {accounts.map((a) => (
+            <div key={a.email} className="rulecard">
+              <div className="rulehead"><b>{a.display_name}</b><span className="muted" style={{ fontSize: 12 }}>{a.email}</span></div>
+              <textarea rows={3} placeholder={"Best regards,\nYour name"} value={sigs[a.email] ?? ""}
+                onChange={(e) => { setSigs((m) => ({ ...m, [a.email]: e.target.value })); setSigSaved(""); }}
+                style={{ width: "100%", resize: "vertical", userSelect: "text" }} />
+              <div className="rowbtns" style={{ alignItems: "center" }}>
+                <button onClick={() => saveSig(a.email)}>Save signature</button>
+                {sigSaved === a.email && <span style={{ color: "#30a46c", fontSize: 12.5 }}>Saved.</span>}
+              </div>
+            </div>
+          ))}
           <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>NOTIFICATIONS</div>
           <label className="switchrow">
             <span>Show a desktop notification when new mail arrives in the Inbox</span>

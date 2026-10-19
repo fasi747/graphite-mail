@@ -297,7 +297,7 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .acctrow .acctdot { margin: 0; }
 .rowbtns { display: flex; gap: 8px; flex-wrap: wrap; }
 .field select, .form select { flex: 1; min-width: 0; }
-.field select { background: transparent; border: 0; padding: 8px 0; color: inherit; font: inherit; }
+.field select { padding: 8px 10px; }
 .field select:focus { outline: none; }
 
 /* Rules */
@@ -314,3 +314,9 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .attname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
 .attsave { padding: 4px 10px; font-size: 12px; color: var(--accent); border-left: 1px solid var(--separator) !important; }
 .fmt { display: flex; align-items: center; }
+
+/* Drop-down lists: readable in light and dark mode */
+select { background-color: var(--field); color: var(--text-primary); border: 0; border-radius: 8px; padding: 6px 8px; font: inherit; }
+select option { background-color: var(--panel); color: var(--text-primary); }
+:root[data-theme="dark"] select { color-scheme: dark; }
+:root[data-theme="light"] select { color-scheme: light; }
