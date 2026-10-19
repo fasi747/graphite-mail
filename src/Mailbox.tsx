@@ -350,7 +350,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       <nav className="sidebar">
         <DragBar><img src="/logo.png" alt="" className="brand-logo" /><span className="brand-name">Graphite Mail</span></DragBar>
         <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
-          <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
+          <span className="ico"><Icon name="calendar" /></span><span className="name" title="All your accounts' calendars together">Master Calendar</span>
         </div>
         <div className="folders">
           {view === "calendar" && cals.length > 0 && <div className="section" style={{ padding: "6px 10px 4px" }}>My calendars <span style={{ fontWeight: 400 }}>· tick to show</span></div>}
