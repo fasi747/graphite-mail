@@ -3,15 +3,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import DOMPurify from "dompurify";
-import { DragBar, TrafficLights } from "./WindowControls";
+import { DragBar } from "./WindowControls";
 import Icon from "./Icon";
 import Compose, { ComposeInit } from "./Compose";
 import CalendarView, { Cal } from "./CalendarView";
 import Settings from "./Settings";
+import { Ribbon, RibbonTab, Group, Big, Small, Stack, BigMenu, NamePrompt } from "./Ribbon";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 type Account = { email: string; display_name: string };
-type Folder = { id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null };
+type Folder = { id: string; remote_id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null };
 type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
   snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean;
@@ -108,10 +109,13 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tab, setTab] = useState<RibbonTab>("home");
+  const [meetingReq, setMeetingReq] = useState({ teams: true, n: 0 });
+  const [prompt, setPrompt] = useState<null | { kind: "new" | "sub" | "rename" }>(null);
   const pending = queue.filter((q) => !q.failed).length;
   const rejected = queue.filter((q) => q.failed).length;
   const refreshQueue = () => invoke<QueueItem[]>("pending_details").then(setQueue).catch(() => {});
-  const [moveOpen, setMoveOpen] = useState(false);
+  const [, setMoveOpen] = useState(false);
   const [view, setView] = useState<"mail" | "calendar">("mail");
   const [cals, setCals] = useState<Cal[]>([]);
   const [hiddenCals, setHiddenCals] = useState<Set<string>>(() => { try { return new Set(JSON.parse(localStorage.getItem("hiddenCals") || "[]")); } catch { return new Set(); } });
@@ -267,20 +271,61 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   );
 
   const current = folders.find((f) => f.id === folderId);
+
+  // Show folders as a tree: children under their parent, indented.
+  const tree = useMemo(() => {
+    const ids = new Set(folders.map((f) => f.remote_id));
+    const kids = new Map<string, Folder[]>();
+    const roots: Folder[] = [];
+    for (const f of folders) {
+      if (f.parent_remote_id && ids.has(f.parent_remote_id)) {
+        const k = kids.get(f.parent_remote_id) ?? []; k.push(f); kids.set(f.parent_remote_id, k);
+      } else roots.push(f);
+    }
+    const out: { f: Folder; depth: number }[] = [];
+    const walk = (list: Folder[], depth: number) => { for (const f of list) { out.push({ f, depth }); walk(kids.get(f.remote_id) ?? [], depth + 1); } };
+    walk(roots, 0);
+    return out;
+  }, [folders]);
+
+  const builtIn = !!current?.well_known;
+  const folderAction = async (name: string) => {
+    const kind = prompt?.kind;
+    setPrompt(null);
+    try {
+      if (kind === "new") { const id = await invoke<string>("create_folder", { name, parentId: null }); flash(`Folder "${name}" created`); await loadFolders(); setFolderId(id); }
+      else if (kind === "sub" && current) { const id = await invoke<string>("create_folder", { name, parentId: current.id }); flash(`Folder "${name}" created inside ${current.name}`); await loadFolders(); setFolderId(id); }
+      else if (kind === "rename" && current) { await invoke("rename_folder", { id: current.id, name }); flash("Folder renamed"); loadFolders(); }
+    } catch (e) { flash(String(e)); }
+  };
+  const deleteFolder = async () => {
+    if (!current || builtIn) return;
+    if (!(await ask(`Delete the folder "${current.name}" and everything in it? Microsoft 365 moves it to Deleted Items.`, { title: "Delete folder", kind: "warning" }))) return;
+    try {
+      await invoke("delete_folder", { id: current.id });
+      flash("Folder deleted");
+      setFolderId(folders.find((f) => f.well_known === "inbox")?.id ?? null);
+      setSelected(null);
+      loadFolders();
+    } catch (e) { flash(String(e)); }
+  };
+  const archiveFolder = folders.find((f) => f.well_known === "archive");
+  const newMeeting = (teams: boolean) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1 })); };
+  const moveItems = tree.filter(({ f }) => f.id !== folderId && selected).map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => selected && moveTo(selected, f) }));
+  const mailTab = view === "mail";
   const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
   return (
     <div className="shell">
-      <div className="winbtns"><TrafficLights /></div>
       <nav className="sidebar">
-        <DragBar />
+        <DragBar><img src="/logo.png" alt="" className="brand-logo" /><span className="brand-name">Graphite Mail</span></DragBar>
         <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
           <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
         </div>
         <div className="section">Mailboxes</div>
         <div className="folders">
-          {folders.map((f) => (
-            <div key={f.id} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
+          {tree.map(({ f, depth }) => (
+            <div key={f.id} style={{ paddingLeft: 10 + depth * 16 }} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
               <span className="ico"><Icon name={f.well_known ?? "folder"} /></span>
               <span className="name">{f.name}</span>
               {f.unread > 0 && <span className="count">{f.unread}</span>}
@@ -313,7 +358,69 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
         </div>
       </nav>
 
-      {view === "calendar" && <PaneBoundary><CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} /></PaneBoundary>}
+      <Ribbon tabs={[{ id: "home", label: "Home" }, { id: "folder", label: "Folder" }, { id: "view", label: "View" }]} active={tab} onTab={setTab}>
+        {tab === "home" && <>
+          <Group label="New">
+            <Big icon="compose" label="New Email" accent onClick={() => setCompose({ mode: "new" })} title="New email (Ctrl+N)" />
+            <Big icon="meeting" label="New Meeting" onClick={() => newMeeting(true)} title="New Teams meeting" />
+            <Stack><Small icon="calendar" label="New Event" onClick={() => newMeeting(false)} /></Stack>
+          </Group>
+          <Group label="Delete">
+            <Big icon="trash" label="Delete" disabled={!mailTab || !selected} onClick={() => selected && del(selected)} title="Delete (Del)" />
+            <Big icon="archive" label="Archive" disabled={!mailTab || !selected || !archiveFolder || folderId === archiveFolder.id} onClick={() => selected && archiveFolder && moveTo(selected, archiveFolder)} />
+          </Group>
+          <Group label="Respond">
+            <Big icon="reply" label="Reply" disabled={!mailTab || !selected} onClick={() => startCompose("reply")} title="Reply (Ctrl+R)" />
+            <Big icon="replyall" label="Reply All" disabled={!mailTab || !selected} onClick={() => startCompose("replyAll")} title="Reply all (Ctrl+Shift+R)" />
+            <Big icon="forward" label="Forward" disabled={!mailTab || !selected} onClick={() => startCompose("forward")} title="Forward (Ctrl+Shift+F)" />
+          </Group>
+          <Group label="Move">
+            <BigMenu icon="move" label="Move" disabled={!mailTab || !selected} items={moveItems} />
+          </Group>
+          <Group label="Tags">
+            <Stack>
+              <Small icon={selected?.is_read ? "unread" : "read"} label={selected?.is_read ? "Mark Unread" : "Mark Read"} disabled={!mailTab || !selected} onClick={() => selected && toggleRead(selected)} />
+              <Small icon="flag" label={selected?.is_flagged ? "Clear Flag" : "Flag"} on={!!selected?.is_flagged} disabled={!mailTab || !selected} onClick={() => selected && toggleFlag(selected)} />
+            </Stack>
+          </Group>
+          <Group label="Sync">
+            <Big icon="sync" label={syncing ? "Syncing…" : "Send / Receive"} disabled={syncing || !online} onClick={syncNow} />
+          </Group>
+        </>}
+        {tab === "folder" && <>
+          <Group label="New">
+            <Big icon="newfolder" label="New Folder" onClick={() => setPrompt({ kind: "new" })} />
+            <Big icon="subfolder" label="New Subfolder" disabled={!current || view !== "mail"} onClick={() => setPrompt({ kind: "sub" })} title={current ? `New folder inside ${current.name}` : undefined} />
+          </Group>
+          <Group label={current ? `“${current.name}”` : "Folder"}>
+            <Big icon="rename" label="Rename" disabled={!current || builtIn || view !== "mail"} onClick={() => setPrompt({ kind: "rename" })} title={builtIn ? "Built-in folders can't be renamed" : undefined} />
+            <Big icon="deletefolder" label="Delete Folder" disabled={!current || builtIn || view !== "mail"} onClick={deleteFolder} title={builtIn ? "Built-in folders can't be deleted" : undefined} />
+          </Group>
+          <Group label="Sync">
+            <Big icon="sync" label="Refresh Folders" disabled={syncing || !online} onClick={syncNow} />
+          </Group>
+        </>}
+        {tab === "view" && <>
+          <Group label="Show">
+            <Big icon="mail" label="Mail" onClick={() => setView("mail")} accent={view === "mail"} />
+            <Big icon="calendar" label="Calendar" onClick={() => setView("calendar")} accent={view === "calendar"} />
+          </Group>
+          <Group label="Appearance">
+            <Stack>
+              <Small icon="sun" label="Light" on={theme === "light"} onClick={() => setTheme("light")} />
+              <Small icon="moon" label="Dark" on={theme === "dark"} onClick={() => setTheme("dark")} />
+            </Stack>
+            <Stack>
+              <Small icon={darkMail ? "moon" : "sun"} label={darkMail ? "Emails: dark" : "Emails: original"} disabled={theme !== "dark"} onClick={() => setDarkMail(!darkMail)} title="How email content looks in dark mode" />
+            </Stack>
+          </Group>
+          <Group label="App">
+            <Big icon="settings" label="Settings" onClick={() => setSettingsOpen(true)} />
+          </Group>
+        </>}
+      </Ribbon>
+
+      {view === "calendar" && <PaneBoundary><CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} newRequest={meetingReq} /></PaneBoundary>}
       {view === "mail" && <>
       <section className="list">
         <div className="toolbar" data-tauri-drag-region>
@@ -321,7 +428,6 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
             <b>{query ? "Search" : current?.name ?? "Mail"}</b>
             <span>{query ? `${msgs.length} results` : current ? `${current.total} messages${current.unread ? `, ${current.unread} unread` : ""}` : ""}</span>
           </div>
-          <button className="icon" onClick={() => setCompose({ mode: "new" })} title="New message (Ctrl+N)"><Icon name="compose" /></button>
           <button className="icon" onClick={syncNow} disabled={syncing || !online} title="Get new mail"><span className={syncing ? "spin" : ""}><Icon name="refresh" /></span></button>
         </div>
         <div className="search">
@@ -352,33 +458,6 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       </section>
 
       <section className="reader">
-        <div className="toolbar" data-tauri-drag-region>
-          <div className="title" data-tauri-drag-region />
-          {selected && (
-            <div className="actions">
-              <button className="icon" onClick={() => startCompose("reply")} title="Reply (Ctrl+R)"><Icon name="reply" /></button>
-              <button className="icon" onClick={() => startCompose("replyAll")} title="Reply all (Ctrl+Shift+R)"><Icon name="replyall" /></button>
-              <button className="icon" onClick={() => startCompose("forward")} title="Forward (Ctrl+Shift+F)"><Icon name="forward" /></button>
-              <span style={{ width: 8 }} />
-              <button className="icon" onClick={() => toggleRead(selected)} title={selected.is_read ? "Mark as unread" : "Mark as read"}><Icon name="unread" /></button>
-              <button className="icon" onClick={() => toggleFlag(selected)} title={selected.is_flagged ? "Unflag" : "Flag"} style={selected.is_flagged ? { color: "#ff9f0a" } : undefined}><Icon name="flag" /></button>
-              <span style={{ position: "relative" }}>
-                <button className="icon" onClick={() => setMoveOpen(!moveOpen)} title="Move to folder"><Icon name="move" /></button>
-                {moveOpen && (
-                  <div className="menu">
-                    {folders.filter((f) => f.id !== folderId).map((f) => <div key={f.id} onClick={() => moveTo(selected, f)}>{f.name}</div>)}
-                  </div>
-                )}
-              </span>
-              <button className="icon" onClick={() => del(selected)} title="Delete (Del)"><Icon name="trash" /></button>
-              <span style={{ width: 8 }} />
-            </div>
-          )}
-          {selected && theme === "dark" && (
-            <button className="icon" onClick={() => setDarkMail(!darkMail)} title={darkMail ? "Show email in light mode" : "Show email in dark mode"}><Icon name={darkMail ? "sun" : "moon"} /></button>
-          )}
-          <button className="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Toggle appearance"><Icon name="appearance" /></button>
-        </div>
         {selected ? (
           <>
             <header>
@@ -417,6 +496,13 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
           onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
       )}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      {prompt && (
+        <NamePrompt
+          title={prompt.kind === "rename" ? `Rename “${current?.name}”` : prompt.kind === "sub" ? `New folder inside “${current?.name}”` : "New folder"}
+          initial={prompt.kind === "rename" ? current?.name : ""}
+          confirm={prompt.kind === "rename" ? "Rename" : "Create"}
+          onCancel={() => setPrompt(null)} onSubmit={folderAction} />
+      )}
       {queueOpen && (
         <div className="sheet-backdrop" onClick={() => setQueueOpen(false)}>
           <div className="sheet evsheet" onClick={(e) => e.stopPropagation()}>

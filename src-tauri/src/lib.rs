@@ -2,6 +2,7 @@ mod http;
 mod migrate;
 mod storage;
 mod auth;
+mod folders;
 mod calendar;
 mod mail;
 mod outbox;
@@ -234,6 +235,21 @@ fn log_js(message: String) {
     eprintln!("[graphite][ui] {message}");
 }
 
+#[tauri::command]
+async fn create_folder(name: String, parent_id: Option<String>) -> CmdResult<String> {
+    folders::create(&name, parent_id.as_deref()).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rename_folder(id: String, name: String) -> CmdResult<()> {
+    folders::rename(&id, &name).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_folder(id: String) -> CmdResult<()> {
+    folders::delete(&id).await.map_err(|e| e.to_string())
+}
+
 /// Background loop: sync every 2 minutes while signed in; notify the UI after each pass.
 fn spawn_sync_loop(app: tauri::AppHandle) {
     use tauri::Emitter;
@@ -255,6 +271,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            create_folder,
+            rename_folder,
+            delete_folder,
             sign_in,
             current_account,
             sign_out,

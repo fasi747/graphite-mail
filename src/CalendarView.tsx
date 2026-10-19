@@ -34,12 +34,14 @@ const onDay = (e: Ev, day: Date) => {
   return s < d1 && (e.is_all_day ? en > d0 : en > d0 || sameDay(s, day));
 };
 
-export default function CalendarView({ calendars, hidden, onToast }: { calendars: Cal[]; hidden: Set<string>; onToast: (t: string) => void }) {
+export default function CalendarView({ calendars, hidden, onToast, newRequest }: { calendars: Cal[]; hidden: Set<string>; onToast: (t: string) => void; newRequest?: { teams: boolean; n: number } }) {
   const [mode, setMode] = useState<"week" | "month">(() => (localStorage.getItem("calMode") as "week" | "month") || "week");
   const [anchor, setAnchor] = useState(startOfDay(new Date()));
   const [events, setEvents] = useState<Ev[]>([]);
   const [sel, setSel] = useState<Ev | null>(null);
-  const [creating, setCreating] = useState<{ start: Date; allDay: boolean } | null>(null);
+  const [creating, setCreating] = useState<{ start: Date; allDay: boolean; teams?: boolean } | null>(null);
+  // The ribbon's "New Meeting" / "New Event" buttons ask for the editor via newRequest.
+  useEffect(() => { if (newRequest && newRequest.n > 0) setCreating({ start: nextHalfHour(), allDay: false, teams: newRequest.teams }); }, [newRequest?.n]);
   const grid = useRef<HTMLDivElement>(null);
 
   const range = useMemo(() => {
@@ -242,7 +244,7 @@ const toLocalInput = (d: Date, dateOnly: boolean) => {
   return dateOnly ? date : `${date}T${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { start: Date; allDay: boolean }; calendars: Cal[]; onClose: () => void; onCreated: () => void; onError: (t: string) => void }) {
+function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { start: Date; allDay: boolean; teams?: boolean }; calendars: Cal[]; onClose: () => void; onCreated: () => void; onError: (t: string) => void }) {
   const [title, setTitle] = useState("");
   const [allDay, setAllDay] = useState(init.allDay);
   const [start, setStart] = useState(toLocalInput(init.start, init.allDay));
@@ -250,7 +252,7 @@ function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { st
   const [calId, setCalId] = useState(calendars.find((c) => c.is_primary)?.id ?? calendars[0]?.id ?? "");
   const [location, setLocation] = useState("");
   const [people, setPeople] = useState("");
-  const [teams, setTeams] = useState(false);
+  const [teams, setTeams] = useState(!!init.teams);
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState("");
 
@@ -281,7 +283,7 @@ function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { st
       <div className="sheet evsheet">
         <div className="sheet-bar">
           <button onClick={onClose}>Cancel</button>
-          <b>New Event</b>
+          <b>{init.teams ? "New Meeting" : "New Event"}</b>
           <button className="primary" onClick={save}>Save</button>
         </div>
         <div className="form">

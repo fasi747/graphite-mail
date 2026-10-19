@@ -23,6 +23,14 @@ const P: Record<string, string> = {
   move: "M3 6h6l2 2h10v11H3zM10 13h6M13 10l3 3-3 3",
   calendar: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5",
   settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM19 12l2-1.5-2-3.5-2.4.8-1.8-1L14.4 4h-4l-.4 2.8-1.8 1L5.8 7 3.8 10.5 5.8 12l-2 1.5 2 3.5 2.4-.8 1.8 1 .4 2.8h4l.4-2.8 1.8-1 2.4.8 2-3.5z",
+  meeting: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5M10 14l2 2 4-4",
+  newfolder: "M3 6h6l2 2h10v11H3zM12 11v5M9.5 13.5h5",
+  subfolder: "M3 5h5l1.5 1.5H14v5H3zM8 14h5l1.5 1.5H21v5H8zM5 11.5V17h3",
+  rename: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4M14 20h6",
+  deletefolder: "M3 6h6l2 2h10v11H3zM9.5 11.5l5 5M14.5 11.5l-5 5",
+  sync: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  mail: "M3 6h18v12H3zM3 7l9 6 9-6",
+  read: "M3 9l9-6 9 6v10H3zM3 9l9 6 9-6",
   unread: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
 };
 
