@@ -1,7 +1,7 @@
 //! Split storage: a fixed bootstrap pointer in ~/.config/graphite-mail/bootstrap.json
 //! and a user-chosen, movable data vault holding the SQLite DB and blob store.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -22,7 +22,9 @@ pub struct Bootstrap {
 pub(crate) static DB: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn config_dir() -> Result<PathBuf> {
-    Ok(dirs::config_dir().ok_or(anyhow!("No config dir"))?.join("graphite-mail"))
+    Ok(dirs::config_dir()
+        .ok_or(anyhow!("No config dir"))?
+        .join("graphite-mail"))
 }
 
 fn bootstrap_path() -> Result<PathBuf> {
@@ -115,7 +117,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if !has("offline_mutation_queue", "failed")? {
         // 1 = the server turned this change down; it stays listed so nothing is lost silently.
-        conn.execute_batch("ALTER TABLE offline_mutation_queue ADD COLUMN failed INTEGER DEFAULT 0")?;
+        conn.execute_batch(
+            "ALTER TABLE offline_mutation_queue ADD COLUMN failed INTEGER DEFAULT 0",
+        )?;
     }
     Ok(())
 }
@@ -130,7 +134,12 @@ pub fn with_db<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
 }
 
 pub fn blob_dir() -> Result<PathBuf> {
-    Ok(Path::new(&read_bootstrap().ok_or(anyhow!("Not set up"))?.active_data_root).join("blobs"))
+    Ok(Path::new(
+        &read_bootstrap()
+            .ok_or(anyhow!("Not set up"))?
+            .active_data_root,
+    )
+    .join("blobs"))
 }
 
 const SCHEMA: &str = r#"

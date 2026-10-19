@@ -1,11 +1,12 @@
-mod http;
-mod migrate;
-mod storage;
 mod auth;
-mod folders;
 mod calendar;
+mod folders;
+mod http;
 mod mail;
+mod notify;
+mod migrate;
 mod outbox;
+mod storage;
 mod sync;
 
 use auth::Account;
@@ -60,8 +61,25 @@ fn initialize_storage(path: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn sync_now() -> CmdResult<sync::SyncReport> {
-    sync::sync_all().await.map_err(|e| e.to_string())
+async fn sync_now(app: tauri::AppHandle) -> CmdResult<sync::SyncReport> {
+    let r = sync::sync_all().await.map_err(|e| e.to_string())?;
+    notify::announce(&app);
+    Ok(r)
+}
+
+#[tauri::command]
+fn get_notifications() -> bool {
+    notify::enabled()
+}
+
+#[tauri::command]
+fn set_notifications(app: tauri::AppHandle, on: bool) -> CmdResult<()> {
+    notify::set_setting("notifications", if on { "on" } else { "off" }).map_err(|e| e.to_string())?;
+    if on {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = app.notification().builder().title("Graphite Mail").body("Notifications are on. You'll see new Inbox mail here.").show();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -125,7 +143,10 @@ fn pending_details() -> CmdResult<Vec<outbox::QueueItem>> {
 #[tauri::command]
 async fn retry_pending() -> CmdResult<()> {
     outbox::retry_failed().map_err(|e| e.to_string())?;
-    outbox::replay().await.map(|_| ()).map_err(|e| e.to_string())
+    outbox::replay()
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Gives up on changes the server rejected.
@@ -205,8 +226,10 @@ fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
         "about" | "tauri" | "ipc" | "asset" => true,
         "http" | "https" => {
             // The app itself: the dev server (development builds only) or bundled files (Windows-style host names).
-            let own = matches!(url.host_str(), Some("tauri.localhost" | "ipc.localhost" | "asset.localhost"))
-                || (cfg!(dev) && matches!(url.host_str(), Some("localhost" | "127.0.0.1")));
+            let own = matches!(
+                url.host_str(),
+                Some("tauri.localhost" | "ipc.localhost" | "asset.localhost")
+            ) || (cfg!(dev) && matches!(url.host_str(), Some("localhost" | "127.0.0.1")));
             if own {
                 return true;
             }
@@ -237,7 +260,9 @@ fn log_js(message: String) {
 
 #[tauri::command]
 async fn create_folder(name: String, parent_id: Option<String>) -> CmdResult<String> {
-    folders::create(&name, parent_id.as_deref()).await.map_err(|e| e.to_string())
+    folders::create(&name, parent_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -258,7 +283,10 @@ fn spawn_sync_loop(app: tauri::AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             if auth::current_account().is_some() && storage::read_bootstrap().is_some() {
                 let res = sync::sync_all().await.map_err(|e| e.to_string());
-                if let Err(e) = &res { eprintln!("[graphite] background sync failed: {e}"); }
+                match &res {
+                    Ok(_) => notify::announce(&app),
+                    Err(e) => eprintln!("[graphite] background sync failed: {e}"),
+                }
                 let _ = app.emit("sync-finished", res);
             }
         }
@@ -268,9 +296,12 @@ fn spawn_sync_loop(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            get_notifications,
+            set_notifications,
             create_folder,
             rename_folder,
             delete_folder,

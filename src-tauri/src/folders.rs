@@ -2,14 +2,16 @@
 //! The local folder table is updated from the server's reply so the sidebar changes at once.
 
 use crate::{auth, storage};
-use anyhow::{anyhow, Result};
-use rusqlite::{params, OptionalExtension};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use rusqlite::{OptionalExtension, params};
+use serde_json::{Value, json};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
 async fn call(method: reqwest::Method, url: &str, body: Option<Value>) -> Result<Value> {
-    let token = auth::access_token().await.map_err(|_| anyhow!("You need to be signed in and online to change folders."))?;
+    let token = auth::access_token()
+        .await
+        .map_err(|_| anyhow!("You need to be signed in and online to change folders."))?;
     let mut req = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?
@@ -18,11 +20,16 @@ async fn call(method: reqwest::Method, url: &str, body: Option<Value>) -> Result
     if let Some(b) = body {
         req = req.json(&b);
     }
-    let resp = req.send().await.map_err(|_| anyhow!("You're offline. Folder changes need an internet connection."))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|_| anyhow!("You're offline. Folder changes need an internet connection."))?;
     let status = resp.status();
     let v: Value = resp.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        let msg = v["error"]["message"].as_str().unwrap_or("Microsoft refused the change");
+        let msg = v["error"]["message"]
+            .as_str()
+            .unwrap_or("Microsoft refused the change");
         return Err(anyhow!("{msg}"));
     }
     Ok(v)
@@ -43,7 +50,11 @@ fn clean_name(name: &str) -> Result<String> {
 fn lookup(id: &str) -> Result<(String, Option<String>)> {
     storage::with_db(|db| {
         Ok(db
-            .query_row("SELECT remote_id, well_known_name FROM folders WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT remote_id, well_known_name FROM folders WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()?
             .ok_or(anyhow!("That folder no longer exists."))?)
     })
@@ -56,8 +67,16 @@ pub async fn create(name: &str, parent_id: Option<&str>) -> Result<String> {
         Some(p) => format!("{GRAPH}/me/mailFolders/{}/childFolders", lookup(p)?.0),
         None => format!("{GRAPH}/me/mailFolders"),
     };
-    let v = call(reqwest::Method::POST, &url, Some(json!({ "displayName": name }))).await?;
-    let rid = v["id"].as_str().ok_or(anyhow!("Unexpected reply from Microsoft"))?.to_string();
+    let v = call(
+        reqwest::Method::POST,
+        &url,
+        Some(json!({ "displayName": name })),
+    )
+    .await?;
+    let rid = v["id"]
+        .as_str()
+        .ok_or(anyhow!("Unexpected reply from Microsoft"))?
+        .to_string();
     let id = uuid::Uuid::new_v4().to_string();
     storage::with_db(|db| {
         db.execute(
@@ -77,8 +96,20 @@ pub async fn rename(id: &str, name: &str) -> Result<()> {
     if wk.is_some() {
         return Err(anyhow!("Built-in folders like Inbox can't be renamed."));
     }
-    call(reqwest::Method::PATCH, &format!("{GRAPH}/me/mailFolders/{rid}"), Some(json!({ "displayName": name }))).await?;
-    storage::with_db(|db| Ok(db.execute("UPDATE folders SET display_name=?1 WHERE id=?2", params![name, id]).map(|_| ())?))
+    call(
+        reqwest::Method::PATCH,
+        &format!("{GRAPH}/me/mailFolders/{rid}"),
+        Some(json!({ "displayName": name })),
+    )
+    .await?;
+    storage::with_db(|db| {
+        Ok(db
+            .execute(
+                "UPDATE folders SET display_name=?1 WHERE id=?2",
+                params![name, id],
+            )
+            .map(|_| ())?)
+    })
 }
 
 /// Deletes on the server (Microsoft moves it to Deleted Items) and removes it and its subfolders locally.
@@ -87,14 +118,22 @@ pub async fn delete(id: &str) -> Result<()> {
     if wk.is_some() {
         return Err(anyhow!("Built-in folders like Inbox can't be deleted."));
     }
-    call(reqwest::Method::DELETE, &format!("{GRAPH}/me/mailFolders/{rid}"), None).await?;
+    call(
+        reqwest::Method::DELETE,
+        &format!("{GRAPH}/me/mailFolders/{rid}"),
+        None,
+    )
+    .await?;
     storage::with_db(|db| {
         // Remove the folder and every folder below it; their messages go via ON DELETE CASCADE.
         let mut doomed = vec![rid.clone()];
         let mut i = 0;
         while i < doomed.len() {
             let mut st = db.prepare("SELECT remote_id FROM folders WHERE parent_remote_id=?1")?;
-            let kids: Vec<String> = st.query_map([&doomed[i]], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
+            let kids: Vec<String> = st
+                .query_map([&doomed[i]], |r| r.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
             doomed.extend(kids);
             i += 1;
         }

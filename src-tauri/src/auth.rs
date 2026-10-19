@@ -148,7 +148,10 @@ async fn token_request(form: &[(&str, &str)]) -> Result<TokenResponse> {
             }
             _ => anyhow!(
                 "Microsoft sign-in failed: {}",
-                v["error_description"].as_str().and_then(|d| d.lines().next()).unwrap_or("unknown error")
+                v["error_description"]
+                    .as_str()
+                    .and_then(|d| d.lines().next())
+                    .unwrap_or("unknown error")
             ),
         });
     }

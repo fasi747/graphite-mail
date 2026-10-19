@@ -88,7 +88,10 @@ pub fn messages(folder_id: &str, offset: i64, limit: i64) -> Result<Vec<MessageR
 
 pub fn search(q: &str, limit: i64) -> Result<Vec<MessageRow>> {
     // Quote each term so user input can't break FTS5 syntax; prefix-match the last term.
-    let terms: Vec<String> = q.split_whitespace().map(|t| format!("\"{}\"", t.replace('"', ""))).collect();
+    let terms: Vec<String> = q
+        .split_whitespace()
+        .map(|t| format!("\"{}\"", t.replace('"', "")))
+        .collect();
     if terms.is_empty() {
         return Ok(vec![]);
     }
@@ -104,14 +107,17 @@ pub fn search(q: &str, limit: i64) -> Result<Vec<MessageRow>> {
 }
 
 pub fn message(id: &str) -> Result<MessageDetail> {
-    let (row, to, cc, hash): (MessageRow, Option<String>, Option<String>, Option<String>) = storage::with_db(|db| {
-        Ok(db.query_row(
+    let (row, to, cc, hash): (MessageRow, Option<String>, Option<String>, Option<String>) =
+        storage::with_db(|db| {
+            Ok(db.query_row(
             &format!("SELECT {ROW_COLS}, m.to_recipients_json, m.cc_recipients_json, m.body_blob_hash FROM messages m WHERE m.id=?1"),
             [id],
             |r| Ok((map_row(r)?, r.get(9)?, r.get(10)?, r.get(11)?)),
         )?)
-    })?;
-    let body_html = hash.and_then(|h| sync::read_blob(&h, "html").ok()).map(|b| String::from_utf8_lossy(&b).into_owned());
+        })?;
+    let body_html = hash
+        .and_then(|h| sync::read_blob(&h, "html").ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned());
     let body_html = body_html.map(|html| {
         if !sync::has_cid(&html) {
             return html;
@@ -127,7 +133,12 @@ pub fn message(id: &str) -> Result<MessageDetail> {
         .collect();
         inline_cids(&html, &pics)
     });
-    Ok(MessageDetail { row, to_json: to, cc_json: cc, body_html })
+    Ok(MessageDetail {
+        row,
+        to_json: to,
+        cc_json: cc,
+        body_html,
+    })
 }
 
 /// Replaces `cid:` picture references with the downloaded pictures, embedded as data: URLs.
@@ -136,9 +147,15 @@ fn inline_cids(html: &str, pics: &[(String, String, Vec<u8>)]) -> String {
     let mut out = html.to_string();
     for (cid, mime, bytes) in pics {
         let cid = cid.trim_matches(|c| c == '<' || c == '>');
-        let data = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes));
+        let data = format!(
+            "data:{mime};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        );
         // Mail apps write the id as-is or percent-encoded, in any letter case.
-        for key in [cid.to_string(), url::form_urlencoded::byte_serialize(cid.as_bytes()).collect::<String>()] {
+        for key in [
+            cid.to_string(),
+            url::form_urlencoded::byte_serialize(cid.as_bytes()).collect::<String>(),
+        ] {
             let needle = format!("cid:{key}").to_ascii_lowercase();
             let mut start = 0;
             while let Some(pos) = out.to_ascii_lowercase()[start..].find(&needle) {
@@ -158,7 +175,10 @@ mod tests {
     #[test]
     fn embeds_cid_pictures() {
         let html = r#"<img src="cid:logo@01D"><img src="CID:Logo@01D"><img src="cid:other">"#;
-        let out = inline_cids(html, &[("<logo@01D>".into(), "image/png".into(), vec![1, 2, 3])]);
+        let out = inline_cids(
+            html,
+            &[("<logo@01D>".into(), "image/png".into(), vec![1, 2, 3])],
+        );
         assert_eq!(out.matches("data:image/png;base64,AQID").count(), 2);
         assert!(out.contains("cid:other")); // unknown pictures are left alone
     }

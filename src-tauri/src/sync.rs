@@ -1,8 +1,8 @@
 //! Microsoft Graph mail sync: folder hierarchy, per-folder message delta, and offline body hydration.
 
 use crate::{auth, storage};
-use anyhow::{anyhow, Result};
-use rusqlite::{params, OptionalExtension};
+use anyhow::{Result, anyhow};
+use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -16,13 +16,19 @@ async fn get(url: &str) -> Result<Value> {
     let resp = crate::http::client()
         .get(url)
         .bearer_auth(token)
-        .header("Prefer", "odata.maxpagesize=100, outlook.body-content-type=\"html\"")
+        .header(
+            "Prefer",
+            "odata.maxpagesize=100, outlook.body-content-type=\"html\"",
+        )
         .send()
         .await?;
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        return Err(anyhow!("Graph {status}: {}", body["error"]["message"].as_str().unwrap_or("")));
+        return Err(anyhow!(
+            "Graph {status}: {}",
+            body["error"]["message"].as_str().unwrap_or("")
+        ));
     }
     Ok(body)
 }
@@ -34,7 +40,11 @@ fn now() -> i64 {
 fn ensure_account(acc: &auth::Account) -> Result<String> {
     storage::with_db(|db| {
         if let Some(id) = db
-            .query_row("SELECT id FROM accounts WHERE email=?1", [&acc.email], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM accounts WHERE email=?1",
+                [&acc.email],
+                |r| r.get(0),
+            )
             .optional()?
         {
             return Ok(id);
@@ -77,7 +87,8 @@ pub async fn sync_all() -> Result<SyncReport> {
     rep.folders = sync_folders(&account_id).await?;
 
     let folders: Vec<(String, String, Option<String>)> = storage::with_db(|db| {
-        let mut st = db.prepare("SELECT id, remote_id, delta_link FROM folders WHERE account_id=?1")?;
+        let mut st =
+            db.prepare("SELECT id, remote_id, delta_link FROM folders WHERE account_id=?1")?;
         let rows = st.query_map([&account_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
@@ -97,8 +108,18 @@ pub async fn sync_all() -> Result<SyncReport> {
 }
 
 async fn sync_folders(account_id: &str) -> Result<usize> {
-    let mut stack = vec![format!("{GRAPH}/me/mailFolders?$top=100&includeHiddenFolders=false")];
-    let well_known = ["inbox", "drafts", "sentitems", "deleteditems", "junkemail", "archive", "outbox"];
+    let mut stack = vec![format!(
+        "{GRAPH}/me/mailFolders?$top=100&includeHiddenFolders=false"
+    )];
+    let well_known = [
+        "inbox",
+        "drafts",
+        "sentitems",
+        "deleteditems",
+        "junkemail",
+        "archive",
+        "outbox",
+    ];
     let mut wk_ids = std::collections::HashMap::new();
     for w in well_known {
         if let Ok(v) = get(&format!("{GRAPH}/me/mailFolders/{w}?$select=id")).await {
@@ -128,7 +149,9 @@ async fn sync_folders(account_id: &str) -> Result<usize> {
             })?;
             count += 1;
             if f["childFolderCount"].as_i64().unwrap_or(0) > 0 {
-                stack.push(format!("{GRAPH}/me/mailFolders/{rid}/childFolders?$top=100"));
+                stack.push(format!(
+                    "{GRAPH}/me/mailFolders/{rid}/childFolders?$top=100"
+                ));
             }
         }
         if let Some(next) = page["@odata.nextLink"].as_str() {
@@ -146,15 +169,27 @@ fn recipients_json(v: &Value) -> String {
     Value::Array(list).to_string()
 }
 
-async fn sync_folder_messages(account_id: &str, folder_id: &str, remote: &str, delta: Option<String>) -> Result<usize> {
-    let mut url = delta.unwrap_or_else(|| format!("{GRAPH}/me/mailFolders/{remote}/messages/delta?$select={MSG_FIELDS}"));
+async fn sync_folder_messages(
+    account_id: &str,
+    folder_id: &str,
+    remote: &str,
+    delta: Option<String>,
+) -> Result<usize> {
+    let mut url = delta.unwrap_or_else(|| {
+        format!("{GRAPH}/me/mailFolders/{remote}/messages/delta?$select={MSG_FIELDS}")
+    });
     let mut changed = 0;
     loop {
         let page = match get(&url).await {
             Ok(p) => p,
             Err(e) if e.to_string().contains("410") => {
                 // Delta token expired: clear it so the next pass does a fresh full sync.
-                storage::with_db(|db| Ok(db.execute("UPDATE folders SET delta_link=NULL WHERE id=?1", [folder_id])?))?;
+                storage::with_db(|db| {
+                    Ok(db.execute(
+                        "UPDATE folders SET delta_link=NULL WHERE id=?1",
+                        [folder_id],
+                    )?)
+                })?;
                 return Err(e);
             }
             Err(e) => return Err(e),
@@ -203,7 +238,12 @@ async fn sync_folder_messages(account_id: &str, folder_id: &str, remote: &str, d
             url = next.to_string();
         } else {
             if let Some(dl) = page["@odata.deltaLink"].as_str() {
-                storage::with_db(|db| Ok(db.execute("UPDATE folders SET delta_link=?1 WHERE id=?2", params![dl, folder_id])?))?;
+                storage::with_db(|db| {
+                    Ok(db.execute(
+                        "UPDATE folders SET delta_link=?1 WHERE id=?2",
+                        params![dl, folder_id],
+                    )?)
+                })?;
             }
             break;
         }
@@ -230,7 +270,10 @@ fn strip_html(html: &str) -> String {
 
 /// Content-addressable store: blobs/ab/abcdef….html
 pub fn write_blob(bytes: &[u8], ext: &str) -> Result<String> {
-    let hash: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     let dir = storage::blob_dir()?.join(&hash[..2]);
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{hash}.{ext}"));
@@ -243,7 +286,11 @@ pub fn write_blob(bytes: &[u8], ext: &str) -> Result<String> {
 }
 
 pub fn read_blob(hash: &str, ext: &str) -> Result<Vec<u8>> {
-    Ok(fs::read(storage::blob_dir()?.join(&hash[..2]).join(format!("{hash}.{ext}")))?)
+    Ok(fs::read(
+        storage::blob_dir()?
+            .join(&hash[..2])
+            .join(format!("{hash}.{ext}")),
+    )?)
 }
 
 /// Downloads full HTML bodies for newest messages first so mail is readable offline.
@@ -253,7 +300,9 @@ pub async fn hydrate_bodies(limit: usize) -> Result<usize> {
             "SELECT id, remote_id, COALESCE(subject,''), COALESCE(sender_name,''), COALESCE(sender_address,'')
              FROM messages WHERE body_cached=0 AND remote_id IS NOT NULL ORDER BY received_at DESC LIMIT ?1",
         )?;
-        let rows = st.query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+        let rows = st.query_map([limit as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
     let mut n = 0;
@@ -292,24 +341,40 @@ pub fn has_cid(html: &str) -> bool {
 
 /// Downloads the inline (cid:) pictures of one message and stores them in the blob store.
 async fn fetch_inline_images(message_id: &str, remote_id: &str) -> Result<usize> {
-    let list = get(&format!("{GRAPH}/me/messages/{remote_id}/attachments?$top=50")).await?;
+    let list = get(&format!(
+        "{GRAPH}/me/messages/{remote_id}/attachments?$top=50"
+    ))
+    .await?;
     let mut n = 0;
-    storage::with_db(|db| Ok(db.execute("DELETE FROM attachments WHERE message_id=?1 AND is_inline=1", [message_id])?))?;
+    storage::with_db(|db| {
+        Ok(db.execute(
+            "DELETE FROM attachments WHERE message_id=?1 AND is_inline=1",
+            [message_id],
+        )?)
+    })?;
     for a in list["value"].as_array().cloned().unwrap_or_default() {
         if a["@odata.type"].as_str() != Some("#microsoft.graph.fileAttachment") {
             continue;
         }
-        let Some(cid) = a["contentId"].as_str().filter(|c| !c.is_empty()) else { continue };
+        let Some(cid) = a["contentId"].as_str().filter(|c| !c.is_empty()) else {
+            continue;
+        };
         let aid = a["id"].as_str().unwrap_or_default();
         // The list can leave out the bytes of larger files; ask for the single attachment then.
         let bytes_b64 = match a["contentBytes"].as_str() {
             Some(b) => b.to_string(),
-            None => get(&format!("{GRAPH}/me/messages/{remote_id}/attachments/{aid}")).await?["contentBytes"]
+            None => get(&format!(
+                "{GRAPH}/me/messages/{remote_id}/attachments/{aid}"
+            ))
+            .await?["contentBytes"]
                 .as_str()
                 .unwrap_or_default()
                 .to_string(),
         };
-        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, bytes_b64.as_bytes())?;
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            bytes_b64.as_bytes(),
+        )?;
         let blob = write_blob(&bytes, "bin")?;
         storage::with_db(|db| {
             db.execute(
@@ -341,10 +406,19 @@ async fn backfill_inline(limit: usize) -> Result<usize> {
     })?;
     let mut fetched = 0;
     for (id, rid, hash) in todo {
-        let html = read_blob(&hash, "html").map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
-        let ok = if has_cid(&html) { fetched += 1; fetch_inline_images(&id, &rid).await.is_ok() } else { true };
+        let html = read_blob(&hash, "html")
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let ok = if has_cid(&html) {
+            fetched += 1;
+            fetch_inline_images(&id, &rid).await.is_ok()
+        } else {
+            true
+        };
         if ok {
-            storage::with_db(|db| Ok(db.execute("UPDATE messages SET inline_done=1 WHERE id=?1", [&id])?))?;
+            storage::with_db(|db| {
+                Ok(db.execute("UPDATE messages SET inline_done=1 WHERE id=?1", [&id])?)
+            })?;
         }
         if fetched >= 25 {
             break;
@@ -362,6 +436,9 @@ mod tests {
     }
     #[test]
     fn strips_html() {
-        assert_eq!(super::strip_html("<p>Hello <b>there</b></p>\n<br>world"), "Hello there world");
+        assert_eq!(
+            super::strip_html("<p>Hello <b>there</b></p>\n<br>world"),
+            "Hello there world"
+        );
     }
 }

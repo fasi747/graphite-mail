@@ -13,7 +13,7 @@
 //!  7. Clean up the old folder (only our own folders), state back to IDLE
 
 use crate::storage::{self, Bootstrap};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -22,7 +22,15 @@ use std::path::{Path, PathBuf};
 
 const OWN_DIRS: [&str; 3] = ["db", "blobs", "temp_staging"];
 const STAGING: &str = ".graphite-moving";
-const TABLES: [&str; 7] = ["accounts", "folders", "messages", "attachments", "calendars", "calendar_events", "offline_mutation_queue"];
+const TABLES: [&str; 7] = [
+    "accounts",
+    "folders",
+    "messages",
+    "attachments",
+    "calendars",
+    "calendar_events",
+    "offline_mutation_queue",
+];
 
 #[derive(Serialize, Clone)]
 pub struct Progress {
@@ -40,7 +48,10 @@ pub struct Info {
 
 pub fn info() -> Result<Info> {
     let b = storage::read_bootstrap().ok_or(anyhow!("Not set up yet"))?;
-    Ok(Info { size_bytes: dir_size(Path::new(&b.active_data_root)), path: b.active_data_root })
+    Ok(Info {
+        size_bytes: dir_size(Path::new(&b.active_data_root)),
+        path: b.active_data_root,
+    })
 }
 
 fn dir_size(p: &Path) -> u64 {
@@ -62,7 +73,10 @@ fn normalize(p: &Path) -> Result<PathBuf> {
         if let Ok(c) = cur.canonicalize() {
             return Ok(rest.iter().rev().fold(c, |acc, part| acc.join(part)));
         }
-        match (cur.file_name().map(|f| f.to_owned()), cur.parent().map(|x| x.to_path_buf())) {
+        match (
+            cur.file_name().map(|f| f.to_owned()),
+            cur.parent().map(|x| x.to_path_buf()),
+        ) {
             (Some(name), Some(parent)) => {
                 rest.push(name);
                 cur = parent;
@@ -80,7 +94,8 @@ fn free_space(p: &Path) -> Option<u64> {
     }
     let c = std::ffi::CString::new(probe.as_os_str().as_bytes()).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    (unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0).then(|| st.f_bavail as u64 * st.f_frsize as u64)
+    (unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0)
+        .then(|| st.f_bavail as u64 * st.f_frsize as u64)
 }
 
 fn sync_dir(p: &Path) {
@@ -88,7 +103,6 @@ fn sync_dir(p: &Path) {
         let _ = f.sync_all();
     }
 }
-
 
 /// Copies one file, reads it back from the new place and compares. Returns its size.
 fn copy_verified(src: &Path, dst: &Path) -> Result<u64> {
@@ -99,8 +113,10 @@ fn copy_verified(src: &Path, dst: &Path) -> Result<u64> {
     let mut hasher = Sha256::new();
     let mut size = 0u64;
     {
-        let mut r = fs::File::open(src).with_context(|| format!("Cannot read {}", src.display()))?;
-        let mut w = fs::File::create(&tmp).with_context(|| format!("Cannot write {}", tmp.display()))?;
+        let mut r =
+            fs::File::open(src).with_context(|| format!("Cannot read {}", src.display()))?;
+        let mut w =
+            fs::File::create(&tmp).with_context(|| format!("Cannot write {}", tmp.display()))?;
         let mut buf = vec![0u8; 1 << 20];
         loop {
             let n = r.read(&mut buf)?;
@@ -125,7 +141,10 @@ fn copy_verified(src: &Path, dst: &Path) -> Result<u64> {
     }
     if hasher.finalize() != back.finalize() {
         let _ = fs::remove_file(&tmp);
-        bail!("A file was not copied correctly ({}). The new folder may have a problem; nothing was changed.", src.display());
+        bail!(
+            "A file was not copied correctly ({}). The new folder may have a problem; nothing was changed.",
+            src.display()
+        );
     }
     fs::rename(&tmp, dst)?;
     Ok(size)
@@ -186,7 +205,11 @@ fn checkpoint(_phase: u8) -> Result<()> {
     {
         let v = TEST_STOP.load(std::sync::atomic::Ordering::SeqCst);
         if v & 0x0f == _phase && v != 0 {
-            return if v & CRASH != 0 { Err(Crash.into()) } else { bail!("injected failure in phase {_phase}") };
+            return if v & CRASH != 0 {
+                Err(Crash.into())
+            } else {
+                bail!("injected failure in phase {_phase}")
+            };
         }
     }
     Ok(())
@@ -196,7 +219,14 @@ fn checkpoint(_phase: u8) -> Result<()> {
 pub fn run(target: &str, progress: impl Fn(Progress)) -> Result<String> {
     // Nothing may be saved mid-move: wait for any running sync and hold new ones off until done.
     let _no_sync = crate::sync::SYNC_LOCK.blocking_lock();
-    let say = |phase: u8, label: &str, done: u64, total: u64| progress(Progress { phase, label: label.into(), done, total });
+    let say = |phase: u8, label: &str, done: u64, total: u64| {
+        progress(Progress {
+            phase,
+            label: label.into(),
+            done,
+            total,
+        })
+    };
 
     say(1, "Checking the new folder…", 0, 1);
     let b = storage::read_bootstrap().ok_or(anyhow!("Not set up yet"))?;
@@ -258,7 +288,11 @@ fn validate(source: &Path, target: &Path) -> Result<PathBuf> {
     if let Some(free) = free_space(&dest) {
         if free < need {
             let _ = fs::remove_dir(&dest);
-            bail!("Not enough free space there: about {} MB needed, {} MB free.", need >> 20, free >> 20);
+            bail!(
+                "Not enough free space there: about {} MB needed, {} MB free.",
+                need >> 20,
+                free >> 20
+            );
         }
     }
     Ok(dest)
@@ -272,7 +306,10 @@ fn copy_and_switch(source: &Path, dest: &Path, say: &dyn Fn(u8, &str, u64, u64))
     let first = list_blobs(source);
     let total = first.len() as u64 + 1;
     for (i, rel) in first.iter().enumerate() {
-        copy_verified(&source.join("blobs").join(rel), &stage.join("blobs").join(rel))?;
+        copy_verified(
+            &source.join("blobs").join(rel),
+            &stage.join("blobs").join(rel),
+        )?;
         if i % 20 == 0 {
             say(3, "Copying saved mail…", i as u64, total);
         }
@@ -306,14 +343,22 @@ fn copy_and_switch(source: &Path, dest: &Path, say: &dyn Fn(u8, &str, u64, u64))
         }
         for t in TABLES {
             let q = format!("SELECT COUNT(*) FROM {t}");
-            let (a, b): (i64, i64) = (db.query_row(&q, [], |r| r.get(0))?, copy.query_row(&q, [], |r| r.get(0))?);
+            let (a, b): (i64, i64) = (
+                db.query_row(&q, [], |r| r.get(0))?,
+                copy.query_row(&q, [], |r| r.get(0))?,
+            );
             if a != b {
                 bail!("The copy is missing some {t} ({a} vs {b}). Nothing was changed.");
             }
         }
     }
     for rel in list_blobs(source) {
-        let (a, b) = (fs::metadata(source.join("blobs").join(&rel))?.len(), fs::metadata(stage.join("blobs").join(&rel)).map(|m| m.len()).unwrap_or(u64::MAX));
+        let (a, b) = (
+            fs::metadata(source.join("blobs").join(&rel))?.len(),
+            fs::metadata(stage.join("blobs").join(&rel))
+                .map(|m| m.len())
+                .unwrap_or(u64::MAX),
+        );
         if a != b {
             bail!("A saved message file is missing from the copy. Nothing was changed.");
         }
@@ -330,7 +375,10 @@ fn copy_and_switch(source: &Path, dest: &Path, say: &dyn Fn(u8, &str, u64, u64))
     let reopened = storage::connect(dest).context("The new folder could not be opened")?;
     checkpoint(6)?;
     let mut b: Bootstrap = storage::read_bootstrap().ok_or(anyhow!("Not set up yet"))?;
-    let (old, new) = (b.active_data_root.clone(), dest.to_string_lossy().to_string());
+    let (old, new) = (
+        b.active_data_root.clone(),
+        dest.to_string_lossy().to_string(),
+    );
     b.active_data_root = new;
     b.migration_state = "SWITCHED".into();
     b.pending_migration_target = None;
@@ -344,7 +392,9 @@ fn copy_and_switch(source: &Path, dest: &Path, say: &dyn Fn(u8, &str, u64, u64))
 
 /// Start-up: finish or undo a move that was interrupted. Safe to run any time; does nothing when idle.
 pub fn recover() -> Result<()> {
-    let Some(b) = storage::read_bootstrap() else { return Ok(()) };
+    let Some(b) = storage::read_bootstrap() else {
+        return Ok(());
+    };
     match b.migration_state.as_str() {
         // Died before the switch: the old folder is still the real one. Throw the half-made copy away.
         "COPYING" => {
@@ -418,13 +468,22 @@ mod tests {
         let (tmp, vault) = setup();
         let target = tmp.join("new").join("mail-here");
         let phases = std::sync::Mutex::new(Vec::new());
-        let out = run(target.to_str().unwrap(), |p| phases.lock().unwrap().push(p.phase)).unwrap();
+        let out = run(target.to_str().unwrap(), |p| {
+            phases.lock().unwrap().push(p.phase)
+        })
+        .unwrap();
         let target = target.canonicalize().unwrap();
         assert_eq!(Path::new(&out), target);
         assert_works_at(&target);
-        assert!(!vault.join("db").exists() && !vault.join("blobs").exists(), "old copy should be gone");
+        assert!(
+            !vault.join("db").exists() && !vault.join("blobs").exists(),
+            "old copy should be gone"
+        );
         let seen: std::collections::BTreeSet<u8> = phases.lock().unwrap().iter().copied().collect();
-        assert_eq!(seen.into_iter().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5, 6, 7]
+        );
         assert_eq!(list_blobs(&target).len(), 2);
         // a second move works too (back again)
         run(vault.to_str().unwrap(), |_| {}).unwrap();
@@ -442,7 +501,10 @@ mod tests {
             assert!(err.to_string().contains("injected"), "phase {phase}: {err}");
             TEST_STOP.store(0, SeqCst);
             assert_works_at(&vault.canonicalize().unwrap());
-            assert!(!target.join("db").exists() && !target.join(STAGING).exists(), "phase {phase}: leftovers");
+            assert!(
+                !target.join("db").exists() && !target.join(STAGING).exists(),
+                "phase {phase}: leftovers"
+            );
         }
     }
 
@@ -455,11 +517,17 @@ mod tests {
             TEST_STOP.store(phase | CRASH, SeqCst);
             run(target.to_str().unwrap(), |_| {}).unwrap_err();
             TEST_STOP.store(0, SeqCst);
-            assert_eq!(storage::read_bootstrap().unwrap().migration_state, "COPYING");
+            assert_eq!(
+                storage::read_bootstrap().unwrap().migration_state,
+                "COPYING"
+            );
             // "restart"
             assert!(storage::open_existing().unwrap());
             assert_works_at(&vault.canonicalize().unwrap());
-            assert!(!target.exists() || fs::read_dir(&target).unwrap().next().is_none(), "phase {phase}: copy not cleaned");
+            assert!(
+                !target.exists() || fs::read_dir(&target).unwrap().next().is_none(),
+                "phase {phase}: copy not cleaned"
+            );
         }
     }
 
@@ -473,7 +541,10 @@ mod tests {
         TEST_STOP.store(0, SeqCst);
         let b = storage::read_bootstrap().unwrap();
         assert_eq!(b.migration_state, "SWITCHED");
-        assert!(vault.join("db").exists(), "old copy still there at the moment of the crash");
+        assert!(
+            vault.join("db").exists(),
+            "old copy still there at the moment of the crash"
+        );
         assert!(storage::open_existing().unwrap()); // "restart"
         assert_works_at(&target.canonicalize().unwrap());
         assert!(!vault.join("db").exists(), "old copy removed by recovery");
@@ -484,15 +555,31 @@ mod tests {
         let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         TEST_STOP.store(0, SeqCst);
         let (tmp, vault) = setup();
-        for bad in [vault.clone(), vault.join("inside"), vault.parent().unwrap().to_path_buf()] {
-            assert!(run(bad.to_str().unwrap(), |_| {}).is_err(), "{}", bad.display());
+        for bad in [
+            vault.clone(),
+            vault.join("inside"),
+            vault.parent().unwrap().to_path_buf(),
+        ] {
+            assert!(
+                run(bad.to_str().unwrap(), |_| {}).is_err(),
+                "{}",
+                bad.display()
+            );
         }
         let full = tmp.join("full");
         fs::create_dir_all(&full).unwrap();
         fs::write(full.join("keep.txt"), "mine").unwrap();
-        assert!(run(full.to_str().unwrap(), |_| {}).unwrap_err().to_string().contains("isn't empty"));
+        assert!(
+            run(full.to_str().unwrap(), |_| {})
+                .unwrap_err()
+                .to_string()
+                .contains("isn't empty")
+        );
         assert!(run("relative/path", |_| {}).is_err());
-        assert!(full.join("keep.txt").exists(), "user files are never touched");
+        assert!(
+            full.join("keep.txt").exists(),
+            "user files are never touched"
+        );
         assert_works_at(&vault.canonicalize().unwrap());
     }
 
@@ -507,7 +594,10 @@ mod tests {
         let t = target.to_string_lossy().to_string();
         let job = tokio::task::spawn_blocking(move || run(&t, |_| {}));
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        assert!(!job.is_finished(), "the move must wait for the running sync");
+        assert!(
+            !job.is_finished(),
+            "the move must wait for the running sync"
+        );
         drop(busy);
         job.await.unwrap().unwrap();
         assert_works_at(&target.canonicalize().unwrap());

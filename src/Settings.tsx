@@ -13,6 +13,12 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [moving, setMoving] = useState<Progress | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [notifs, setNotifs] = useState(true);
+  useEffect(() => { invoke<boolean>("get_notifications").then(setNotifs).catch(() => {}); }, []);
+  const toggleNotifs = async (on: boolean) => {
+    setNotifs(on);
+    try { await invoke("set_notifications", { on }); } catch (e) { setError(String(e)); setNotifs(!on); }
+  };
 
   const load = () => invoke<Info>("data_folder_info").then(setInfo).catch((e) => setError(String(e)));
   useEffect(() => {
@@ -50,7 +56,12 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       <div className="sheet evsheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-bar"><span /><b>Settings</b><button disabled={!!moving} onClick={onClose}>Close</button></div>
         <div className="evbody">
-          <div className="muted" style={{ fontSize: 11, fontWeight: 600 }}>DATA FOLDER</div>
+          <div className="muted" style={{ fontSize: 11, fontWeight: 600 }}>NOTIFICATIONS</div>
+          <label className="switchrow">
+            <span>Show a desktop notification when new mail arrives in the Inbox</span>
+            <input type="checkbox" className="switch" checked={notifs} onChange={(e) => toggleNotifs(e.target.checked)} />
+          </label>
+          <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>DATA FOLDER</div>
           <div style={{ userSelect: "text", overflowWrap: "anywhere" }}>{info?.path ?? "…"}</div>
           {info && <div className="muted">{fmtSize(info.size_bytes)} used</div>}
           {moving ? (

@@ -1,10 +1,10 @@
 //! Offline-first mutations: apply locally at once, queue for Graph, replay (with coalescing) before pulling deltas.
 
 use crate::{auth, storage};
-use anyhow::{anyhow, Result};
-use rusqlite::{params, OptionalExtension};
+use anyhow::{Result, anyhow};
+use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
@@ -15,7 +15,11 @@ fn now() -> i64 {
 fn account_id() -> Result<String> {
     storage::with_db(|db| {
         Ok(db
-            .query_row("SELECT id FROM accounts ORDER BY created_at LIMIT 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM accounts ORDER BY created_at LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .optional()?
             .ok_or(anyhow!("No account"))?)
     })
@@ -52,7 +56,10 @@ pub fn set_read(id: &str, read: bool) -> Result<()> {
 pub fn set_flag(id: &str, flagged: bool) -> Result<()> {
     storage::with_db(|db| {
         let tx = db.unchecked_transaction()?;
-        tx.execute("UPDATE messages SET is_flagged=?1, sync_status='DIRTY_LOCAL' WHERE id=?2", params![flagged, id])?;
+        tx.execute(
+            "UPDATE messages SET is_flagged=?1, sync_status='DIRTY_LOCAL' WHERE id=?2",
+            params![flagged, id],
+        )?;
         enqueue(&tx, id, "SET_FLAG", json!({ "flagged": flagged }))?;
         tx.commit()?;
         Ok(())
@@ -70,9 +77,15 @@ pub fn move_to(id: &str, folder_id: &str) -> Result<()> {
         )?;
         if unread {
             tx.execute("UPDATE folders SET unread_count=MAX(0,unread_count-1) WHERE id=(SELECT folder_id FROM messages WHERE id=?1)", [id])?;
-            tx.execute("UPDATE folders SET unread_count=unread_count+1 WHERE id=?1", [folder_id])?;
+            tx.execute(
+                "UPDATE folders SET unread_count=unread_count+1 WHERE id=?1",
+                [folder_id],
+            )?;
         }
-        tx.execute("UPDATE messages SET folder_id=?1, sync_status='DIRTY_LOCAL' WHERE id=?2", params![folder_id, id])?;
+        tx.execute(
+            "UPDATE messages SET folder_id=?1, sync_status='DIRTY_LOCAL' WHERE id=?2",
+            params![folder_id, id],
+        )?;
         enqueue(&tx, id, "MOVE", json!({ "destination": remote_folder }))?;
         tx.commit()?;
         Ok(())
@@ -93,7 +106,10 @@ pub fn delete(id: &str) -> Result<()> {
         (false, Some(t)) => move_to(id, &t),
         _ => storage::with_db(|db| {
             let tx = db.unchecked_transaction()?;
-            let rid: Option<String> = tx.query_row("SELECT remote_id FROM messages WHERE id=?1", [id], |r| r.get(0))?;
+            let rid: Option<String> =
+                tx.query_row("SELECT remote_id FROM messages WHERE id=?1", [id], |r| {
+                    r.get(0)
+                })?;
             tx.execute("DELETE FROM messages_fts WHERE message_id=?1", [id])?;
             tx.execute("DELETE FROM messages WHERE id=?1", [id])?;
             if let Some(rid) = rid {
@@ -118,7 +134,10 @@ pub struct Draft {
 /// Queue an outgoing message; it is sent immediately when online, otherwise on reconnect.
 pub fn send(d: Draft) -> Result<()> {
     let _ = account_id()?;
-    let entity = d.reply_to.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let entity = d
+        .reply_to
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     storage::with_db(|db| {
         enqueue(
             db,
@@ -131,7 +150,13 @@ pub fn send(d: Draft) -> Result<()> {
 
 /// Changes still waiting to go to the server (changes the server turned down are counted separately).
 pub fn pending_count() -> Result<i64> {
-    storage::with_db(|db| Ok(db.query_row("SELECT COUNT(*) FROM offline_mutation_queue WHERE failed=0", [], |r| r.get(0))?))
+    storage::with_db(|db| {
+        Ok(db.query_row(
+            "SELECT COUNT(*) FROM offline_mutation_queue WHERE failed=0",
+            [],
+            |r| r.get(0),
+        )?)
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -162,7 +187,13 @@ pub fn overview() -> Result<Vec<QueueItem>> {
     storage::with_db(|db| {
         let mut st = db.prepare("SELECT seq_id, operation, failed, retry_count, last_error FROM offline_mutation_queue ORDER BY seq_id")?;
         let rows = st.query_map([], |r| {
-            Ok(QueueItem { seq: r.get(0)?, what: describe(&r.get::<_, String>(1)?).into(), failed: r.get(2)?, tries: r.get(3)?, error: r.get(4)? })
+            Ok(QueueItem {
+                seq: r.get(0)?,
+                what: describe(&r.get::<_, String>(1)?).into(),
+                failed: r.get(2)?,
+                tries: r.get(3)?,
+                error: r.get(4)?,
+            })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })
@@ -171,7 +202,10 @@ pub fn overview() -> Result<Vec<QueueItem>> {
 /// Puts rejected changes back in line for another attempt.
 pub fn retry_failed() -> Result<()> {
     storage::with_db(|db| {
-        db.execute("UPDATE offline_mutation_queue SET failed=0, retry_count=0, next_retry_at=0", [])?;
+        db.execute(
+            "UPDATE offline_mutation_queue SET failed=0, retry_count=0, next_retry_at=0",
+            [],
+        )?;
         Ok(())
     })
 }
@@ -242,14 +276,21 @@ fn coalesce(db: &rusqlite::Connection) -> Result<()> {
 fn recipients(list: &Value) -> Value {
     Value::Array(
         list.as_array()
-            .map(|a| a.iter().filter_map(|e| e.as_str()).map(|e| json!({ "emailAddress": { "address": e } })).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| e.as_str())
+                    .map(|e| json!({ "emailAddress": { "address": e } }))
+                    .collect()
+            })
             .unwrap_or_default(),
     )
 }
 
 async fn call(method: reqwest::Method, url: &str, body: Option<Value>) -> Result<(u16, Value)> {
     let token = auth::access_token().await?;
-    let mut req = crate::http::client().request(method, url).bearer_auth(token);
+    let mut req = crate::http::client()
+        .request(method, url)
+        .bearer_auth(token);
     if let Some(b) = body {
         req = req.json(&b);
     }
@@ -296,20 +337,52 @@ pub async fn replay() -> Result<usize> {
         let p = &it.payload;
         use reqwest::Method;
         let result = match (it.op.as_str(), &rid) {
-            ("SET_READ", Some(r)) => call(Method::PATCH, &format!("{base}/me/messages/{r}"), Some(json!({ "isRead": p["read"] }))).await,
-            ("SET_FLAG", Some(r)) => {
-                let s = if p["flagged"].as_bool() == Some(true) { "flagged" } else { "notFlagged" };
-                call(Method::PATCH, &format!("{base}/me/messages/{r}"), Some(json!({ "flag": { "flagStatus": s } }))).await
+            ("SET_READ", Some(r)) => {
+                call(
+                    Method::PATCH,
+                    &format!("{base}/me/messages/{r}"),
+                    Some(json!({ "isRead": p["read"] })),
+                )
+                .await
             }
-            ("MOVE", Some(r)) => call(Method::POST, &format!("{base}/me/messages/{r}/move"), Some(json!({ "destinationId": p["destination"] }))).await,
-            ("DELETE_HARD", Some(r)) => call(Method::DELETE, &format!("{base}/me/messages/{r}"), None).await,
+            ("SET_FLAG", Some(r)) => {
+                let s = if p["flagged"].as_bool() == Some(true) {
+                    "flagged"
+                } else {
+                    "notFlagged"
+                };
+                call(
+                    Method::PATCH,
+                    &format!("{base}/me/messages/{r}"),
+                    Some(json!({ "flag": { "flagStatus": s } })),
+                )
+                .await
+            }
+            ("MOVE", Some(r)) => {
+                call(
+                    Method::POST,
+                    &format!("{base}/me/messages/{r}/move"),
+                    Some(json!({ "destinationId": p["destination"] })),
+                )
+                .await
+            }
+            ("DELETE_HARD", Some(r)) => {
+                call(Method::DELETE, &format!("{base}/me/messages/{r}"), None).await
+            }
             ("SEND", _) => {
                 let msg = json!({
                     "subject": p["subject"], "body": { "contentType": "HTML", "content": p["html"] },
                     "toRecipients": recipients(&p["to"]), "ccRecipients": recipients(&p["cc"]),
                 });
                 match (p["mode"].as_str().unwrap_or("new"), &rid) {
-                    ("new", _) | (_, None) => call(Method::POST, &format!("{base}/me/sendMail"), Some(json!({ "message": msg, "saveToSentItems": true }))).await,
+                    ("new", _) | (_, None) => {
+                        call(
+                            Method::POST,
+                            &format!("{base}/me/sendMail"),
+                            Some(json!({ "message": msg, "saveToSentItems": true })),
+                        )
+                        .await
+                    }
                     (mode, Some(r)) => {
                         // Graph threads replies/forwards correctly when using these endpoints.
                         // A forward must name its recipients at the top level, not only inside the message.
@@ -317,19 +390,36 @@ pub async fn replay() -> Result<usize> {
                         if mode == "forward" {
                             body["toRecipients"] = recipients(&p["to"]);
                         }
-                        call(Method::POST, &format!("{base}/me/messages/{r}/{mode}"), Some(body)).await
+                        call(
+                            Method::POST,
+                            &format!("{base}/me/messages/{r}/{mode}"),
+                            Some(body),
+                        )
+                        .await
                     }
                 }
             }
             ("RSVP", Some(r)) => {
                 let resp = p["response"].as_str().unwrap_or("accept");
-                call(Method::POST, &format!("{base}/me/events/{r}/{resp}"), Some(json!({ "sendResponse": true }))).await
+                call(
+                    Method::POST,
+                    &format!("{base}/me/events/{r}/{resp}"),
+                    Some(json!({ "sendResponse": true })),
+                )
+                .await
             }
             ("CREATE_EVENT", _) => {
                 let cal = p["calendar"].as_str().unwrap_or_default();
-                call(Method::POST, &format!("{base}/me/calendars/{cal}/events"), Some(p["event"].clone())).await
+                call(
+                    Method::POST,
+                    &format!("{base}/me/calendars/{cal}/events"),
+                    Some(p["event"].clone()),
+                )
+                .await
             }
-            ("DELETE_EVENT", Some(r)) => call(Method::DELETE, &format!("{base}/me/events/{r}"), None).await,
+            ("DELETE_EVENT", Some(r)) => {
+                call(Method::DELETE, &format!("{base}/me/events/{r}"), None).await
+            }
             (_, None) => Ok((404, Value::Null)), // item no longer exists remotely
             _ => Ok((400, Value::Null)),
         };
@@ -337,11 +427,17 @@ pub async fn replay() -> Result<usize> {
         match result {
             Ok((s, v)) if matches!(verdict(&it.op, s), Verdict::Done) => {
                 storage::with_db(|db| {
-                    db.execute("DELETE FROM offline_mutation_queue WHERE seq_id=?1", [it.seq])?;
+                    db.execute(
+                        "DELETE FROM offline_mutation_queue WHERE seq_id=?1",
+                        [it.seq],
+                    )?;
                     if it.op == "MOVE" {
                         // Graph gives moved messages a new id; keep our local id stable.
                         if let Some(new_id) = v["id"].as_str() {
-                            db.execute("UPDATE messages SET remote_id=?1 WHERE id=?2", params![new_id, it.entity])?;
+                            db.execute(
+                                "UPDATE messages SET remote_id=?1 WHERE id=?2",
+                                params![new_id, it.entity],
+                            )?;
                         }
                     }
                     if it.op == "CREATE_EVENT" {
@@ -358,15 +454,26 @@ pub async fn replay() -> Result<usize> {
                         |r| r.get(0),
                     )?;
                     if still_dirty == 0 {
-                        db.execute("UPDATE messages SET sync_status='SYNCED' WHERE id=?1", [&it.entity])?;
-                        db.execute("UPDATE calendar_events SET sync_status='SYNCED' WHERE id=?1", [&it.entity])?;
+                        db.execute(
+                            "UPDATE messages SET sync_status='SYNCED' WHERE id=?1",
+                            [&it.entity],
+                        )?;
+                        db.execute(
+                            "UPDATE calendar_events SET sync_status='SYNCED' WHERE id=?1",
+                            [&it.entity],
+                        )?;
                     }
                     Ok(())
                 })?;
                 done += 1;
             }
             Ok((s, v)) => {
-                let msg = format!("{s}: {}", v["error"]["message"].as_str().unwrap_or("The server did not accept this change."));
+                let msg = format!(
+                    "{s}: {}",
+                    v["error"]["message"]
+                        .as_str()
+                        .unwrap_or("The server did not accept this change.")
+                );
                 eprintln!("[graphite] change {} not accepted: {msg}", it.op);
                 let rejected = matches!(verdict(&it.op, s), Verdict::Rejected);
                 storage::with_db(|db| {
@@ -383,7 +490,12 @@ pub async fn replay() -> Result<usize> {
             Err(e) => {
                 // Offline or timed out: remember why, try again next pass, and stop here to keep order.
                 let msg = e.to_string();
-                let _ = storage::with_db(|db| Ok(db.execute("UPDATE offline_mutation_queue SET last_error=?1 WHERE seq_id=?2", params![msg, it.seq])?));
+                let _ = storage::with_db(|db| {
+                    Ok(db.execute(
+                        "UPDATE offline_mutation_queue SET last_error=?1 WHERE seq_id=?2",
+                        params![msg, it.seq],
+                    )?)
+                });
                 return if done > 0 { Ok(done) } else { Err(e) };
             }
         }
@@ -406,7 +518,11 @@ mod tests {
         )
         .unwrap();
         super::coalesce(&db).unwrap();
-        let n: i64 = db.query_row("SELECT COUNT(*) FROM offline_mutation_queue", [], |r| r.get(0)).unwrap();
+        let n: i64 = db
+            .query_row("SELECT COUNT(*) FROM offline_mutation_queue", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(n, 3); // one read for m1, the move, one read for m2
         let last: String = db
             .query_row("SELECT payload_json FROM offline_mutation_queue WHERE local_entity_id='m1' AND operation='SET_READ'", [], |r| r.get(0))
@@ -435,16 +551,34 @@ mod tests {
                     data.extend_from_slice(&buf[..n]);
                     let text = String::from_utf8_lossy(&data).to_string();
                     if let Some(head_end) = text.find("\r\n\r\n") {
-                        let want = text[..head_end].to_ascii_lowercase().split("content-length:").nth(1)
-                            .and_then(|r| r.lines().next()?.trim().parse::<usize>().ok()).unwrap_or(0);
-                        if data.len() >= head_end + 4 + want { break; }
+                        let want = text[..head_end]
+                            .to_ascii_lowercase()
+                            .split("content-length:")
+                            .nth(1)
+                            .and_then(|r| r.lines().next()?.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if data.len() >= head_end + 4 + want {
+                            break;
+                        }
                     }
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                seen2.lock().unwrap().push(String::from_utf8_lossy(&data).to_string());
+                seen2
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&data).to_string());
                 let st = queue.lock().unwrap().pop_front().unwrap_or(200);
-                let body = if st >= 400 { r#"{"error":{"message":"boom"}}"# } else { "{}" };
-                let resp = format!("HTTP/1.1 {st} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let body = if st >= 400 {
+                    r#"{"error":{"message":"boom"}}"#
+                } else {
+                    "{}"
+                };
+                let resp = format!(
+                    "HTTP/1.1 {st} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
                 let _ = sock.write_all(resp.as_bytes()).await;
             }
         });
@@ -494,7 +628,11 @@ mod tests {
         let list = overview().unwrap();
         assert!(list[0].failed && list[0].error.as_deref().unwrap().contains("403"));
         replay().await.unwrap();
-        assert_eq!(seen.lock().unwrap().len(), 1, "a refused change must not be retried");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "a refused change must not be retried"
+        );
         discard_failed().unwrap();
         assert!(overview().unwrap().is_empty());
 
@@ -505,25 +643,41 @@ mod tests {
         replay().await.unwrap();
         assert_eq!(pending_count().unwrap(), 1);
         let (tries, later): (i64, bool) = storage::with_db(|db| {
-            Ok(db.query_row("SELECT retry_count, next_retry_at > ?1 FROM offline_mutation_queue", [now()], |r| Ok((r.get(0)?, r.get(1)?)))?)
-        }).unwrap();
+            Ok(db.query_row(
+                "SELECT retry_count, next_retry_at > ?1 FROM offline_mutation_queue",
+                [now()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?)
+        })
+        .unwrap();
         assert_eq!((tries, later), (1, true));
         clear();
 
         // 4. A forward names its recipients at the top level.
         let (url, seen) = fake_graph(vec![202]).await;
         unsafe { std::env::set_var("GM_TEST_GRAPH", &url) };
-        q("SEND", "m1", json!({ "mode": "forward", "to": ["a@x.com"], "cc": [], "subject": "Fw: hi", "html": "<p>hi</p>" }));
+        q(
+            "SEND",
+            "m1",
+            json!({ "mode": "forward", "to": ["a@x.com"], "cc": [], "subject": "Fw: hi", "html": "<p>hi</p>" }),
+        );
         assert_eq!(replay().await.unwrap(), 1);
         let req = seen.lock().unwrap()[0].clone();
         assert!(req.starts_with("POST /me/messages/r1/forward "));
         let body: Value = serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-        assert_eq!(body["toRecipients"][0]["emailAddress"]["address"], "a@x.com");
+        assert_eq!(
+            body["toRecipients"][0]["emailAddress"]["address"],
+            "a@x.com"
+        );
 
         // 5. A reply whose original message is gone (404) is never dropped silently.
         let (url, _) = fake_graph(vec![404]).await;
         unsafe { std::env::set_var("GM_TEST_GRAPH", &url) };
-        q("SEND", "m1", json!({ "mode": "reply", "to": ["a@x.com"], "cc": [], "subject": "Re: hi", "html": "<p>x</p>" }));
+        q(
+            "SEND",
+            "m1",
+            json!({ "mode": "reply", "to": ["a@x.com"], "cc": [], "subject": "Re: hi", "html": "<p>x</p>" }),
+        );
         replay().await.unwrap();
         assert_eq!(pending_count().unwrap(), 0);
         assert!(overview().unwrap()[0].failed);
