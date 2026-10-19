@@ -22,6 +22,7 @@ const P: Record<string, string> = {
   trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
   move: "M3 6h6l2 2h10v11H3zM10 13h6M13 10l3 3-3 3",
   calendar: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5",
+  rules: "M3 5h18l-7 8v6l-4-2v-4zM16 17h5M18.5 14.5v5",
   settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM19 12l2-1.5-2-3.5-2.4.8-1.8-1L14.4 4h-4l-.4 2.8-1.8 1L5.8 7 3.8 10.5 5.8 12l-2 1.5 2 3.5 2.4-.8 1.8 1 .4 2.8h4l.4-2.8 1.8-1 2.4.8 2-3.5z",
   meeting: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5M10 14l2 2 4-4",
   newfolder: "M3 6h6l2 2h10v11H3zM12 11v5M9.5 13.5h5",

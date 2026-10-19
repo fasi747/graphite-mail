@@ -8,10 +8,11 @@ import Icon from "./Icon";
 import Compose, { ComposeInit } from "./Compose";
 import CalendarView, { Cal } from "./CalendarView";
 import Settings from "./Settings";
+import Rules from "./Rules";
 import { Ribbon, RibbonTab, Group, Big, Small, Stack, BigMenu, NamePrompt } from "./Ribbon";
 import { ask } from "@tauri-apps/plugin-dialog";
 
-type Account = { email: string; display_name: string; provider?: string };
+type Account = { email: string; display_name: string; provider?: string; rules?: boolean };
 const ALL = "all-inboxes";
 const PALETTE = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff"];
 type Folder = { id: string; remote_id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null; account_email: string };
@@ -132,6 +133,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [tab, setTab] = useState<RibbonTab>("home");
   const [meetingReq, setMeetingReq] = useState({ teams: true, n: 0 });
   const [prompt, setPrompt] = useState<null | { kind: "new" | "sub" | "rename" }>(null);
@@ -433,6 +435,9 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
               <Small icon="flag" label={selected?.is_flagged ? "Clear Flag" : "Flag"} on={!!selected?.is_flagged} disabled={!mailTab || !selected} onClick={() => selected && toggleFlag(selected)} />
             </Stack>
           </Group>
+          <Group label="Rules">
+            <Big icon="rules" label="Rules" onClick={() => setRulesOpen(true)} title="Automatically move, mark or delete incoming mail" />
+          </Group>
           <Group label="Sync">
             <Big icon="sync" label={syncing ? "Syncing…" : "Send / Receive"} disabled={syncing || !online} onClick={syncNow} />
           </Group>
@@ -546,6 +551,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
         <Compose init={compose} accounts={accounts} onClose={() => setCompose(null)}
           onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
       )}
+      {rulesOpen && <Rules accounts={accounts} folders={folders} onClose={() => setRulesOpen(false)} onToast={flash} onAccountsChanged={() => { loadFolders(); }} />}
       {settingsOpen && <Settings accounts={accounts} onClose={() => setSettingsOpen(false)}
         onAccountsChanged={async () => {
           const accs = await loadFolders();

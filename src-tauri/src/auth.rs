@@ -14,6 +14,12 @@ pub const CLIENT_ID: &str = "4fd86bd0-7f26-4941-87a6-e69aa7e982d0";
 const AUTHORITY: &str = "https://login.microsoftonline.com/common/oauth2/v2.0";
 const SCOPES: &str =
     "openid profile offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite";
+/// Extra permission needed to create Outlook mail rules; asked for only when the user turns rules on.
+const RULES_SCOPE: &str = "MailboxSettings.ReadWrite";
+
+fn scopes(rules: bool) -> String {
+    if rules { format!("{SCOPES} {RULES_SCOPE}") } else { SCOPES.to_string() }
+}
 const KEYRING_SERVICE: &str = "graphite-mail";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -23,6 +29,9 @@ pub struct Account {
     /// "microsoft" or "google"
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// The account has granted the extra permission that mail rules need.
+    #[serde(default)]
+    pub rules: bool,
 }
 
 fn default_provider() -> String {
@@ -106,7 +115,11 @@ pub fn remember(acc: &Account, refresh_token: &str) -> Result<()> {
     entry(&rt_key(&acc.email))?.set_password(refresh_token)?;
     let mut list = accounts();
     match list.iter_mut().find(|a| a.email.eq_ignore_ascii_case(&acc.email)) {
-        Some(a) => *a = acc.clone(),
+        Some(a) => {
+            let rules = a.rules || acc.rules; // a permission once granted stays granted
+            *a = acc.clone();
+            a.rules = rules;
+        }
         None => list.push(acc.clone()),
     }
     save_accounts(&list)
@@ -130,6 +143,12 @@ fn entry(key: &str) -> Result<keyring::Entry> {
 
 /// Runs the interactive sign-in. `open` is called with the URL to show in the system browser.
 pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
+    sign_in_with(open, false, None).await
+}
+
+/// Sign-in that can also ask for the mail-rules permission, and pre-select an account with `hint`.
+pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hint: Option<&str>) -> Result<Account> {
+    let scope = scopes(rules);
     let verifier = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -147,11 +166,14 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", &redirect)
         .append_pair("response_mode", "query")
-        .append_pair("scope", SCOPES)
+        .append_pair("scope", &scope)
         .append_pair("state", &state)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
-        .append_pair("prompt", "select_account");
+        .append_pair("prompt", if hint.is_some() { "consent" } else { "select_account" });
+    if let Some(h) = hint {
+        url.query_pairs_mut().append_pair("login_hint", h);
+    }
     open(url.as_str())?;
 
     let code = tokio::time::timeout(Duration::from_secs(300), wait_for_code(&listener, &state))
@@ -164,11 +186,12 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
         ("code", &code),
         ("redirect_uri", &redirect),
         ("code_verifier", &verifier),
-        ("scope", SCOPES),
+        ("scope", &scope),
     ])
     .await?;
 
-    let account = fetch_me(&tok.access_token).await?;
+    let mut account = fetch_me(&tok.access_token).await?;
+    account.rules = rules;
     remember(&account, tok.refresh_token.as_deref().ok_or(anyhow!("No refresh token"))?)?;
     cache_put(&account.email, &tok.access_token, tok.expires_in);
     Ok(account)
@@ -259,6 +282,7 @@ async fn fetch_me(token: &str) -> Result<Account> {
         email: me.mail.unwrap_or(me.user_principal_name.clone()),
         display_name: me.display_name.unwrap_or(me.user_principal_name),
         provider: "microsoft".into(),
+        rules: false,
     })
 }
 
@@ -277,11 +301,12 @@ pub async fn access_token() -> Result<String> {
         return crate::google::access_token(&email).await;
     }
     let rt = refresh_token_for(&email)?;
+    let scope = scopes(acc.as_ref().is_some_and(|a| a.rules));
     let tok = token_request(&[
         ("client_id", CLIENT_ID),
         ("grant_type", "refresh_token"),
         ("refresh_token", &rt),
-        ("scope", SCOPES),
+        ("scope", &scope),
     ])
     .await
     .map_err(|e| anyhow!("{email}: {e}"))?;

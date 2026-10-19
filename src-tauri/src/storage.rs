@@ -264,6 +264,24 @@ CREATE TABLE IF NOT EXISTS account_state (
     PRIMARY KEY (account_id, key)
 );
 
+-- Mail rules (kept on the server as Outlook rules / Gmail filters; mirrored here).
+CREATE TABLE IF NOT EXISTS rules (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    from_text TEXT NOT NULL DEFAULT '',
+    subject_text TEXT NOT NULL DEFAULT '',
+    to_text TEXT NOT NULL DEFAULT '',
+    body_text TEXT NOT NULL DEFAULT '',
+    move_to_folder TEXT REFERENCES folders(id) ON DELETE SET NULL,
+    mark_read INTEGER NOT NULL DEFAULT 0,
+    flag INTEGER NOT NULL DEFAULT 0,
+    del INTEGER NOT NULL DEFAULT 0,
+    remote_id TEXT,
+    created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS offline_mutation_queue (
     seq_id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

@@ -299,3 +299,9 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .field select, .form select { flex: 1; min-width: 0; }
 .field select { background: transparent; border: 0; padding: 8px 0; color: inherit; font: inherit; }
 .field select:focus { outline: none; }
+
+/* Rules */
+.rulefield { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.rulecard { border: 1px solid var(--separator); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.rulehead { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.evbody .prompt-actions { position: sticky; bottom: 0; background: var(--panel); padding: 10px 0 2px; }

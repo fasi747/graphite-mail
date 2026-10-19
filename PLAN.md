@@ -24,3 +24,8 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Multi-account UI (grouped sidebar, From picker, add/remove account, New Folder per account)
 - [x] Gmail: sign-in (desktop client, PKCE), labels → folders, history-based sync, send/reply, star/read/move/trash, Google Calendar
 - [x] Gmail tested with a real account (Faisal, v1.2.1)
+
+## v1.3 — rules
+- [x] Server-side rules: Outlook inbox rules + Gmail filters (conditions: from, subject, to/cc, words; actions: move, mark read, flag/star/important, delete)
+- [x] "Run on existing mail" (applied locally, sent to the server through the offline queue)
+- [ ] Tested with real accounts

@@ -31,6 +31,8 @@ const CLIENT_SECRET: &str = match option_env!("GRAPHITE_GOOGLE_CLIENT_SECRET") {
 };
 
 /// First sync: how far back, and at most how many messages, to download.
+const FILTERS_SCOPE: &str = "https://www.googleapis.com/auth/gmail.settings.basic";
+
 const INITIAL_DAYS: i64 = 90;
 const INITIAL_MAX: usize = 3000;
 const PAST_DAYS: i64 = 90;
@@ -39,7 +41,7 @@ const PARALLEL: usize = 6;
 
 // ---------------------------------------------------------------- endpoints (overridable in tests)
 
-fn gmail() -> String {
+pub(crate) fn gmail() -> String {
     #[cfg(test)]
     if let Ok(b) = std::env::var("GM_TEST_GOOGLE") {
         return format!("{b}/gmail/v1/users/me");
@@ -56,7 +58,7 @@ fn cal() -> String {
 }
 
 /// base + percent-encoded path segments + query (duplicate keys allowed).
-fn url(base: &str, segs: &[&str], q: &[(&str, &str)]) -> String {
+pub(crate) fn url(base: &str, segs: &[&str], q: &[(&str, &str)]) -> String {
     let mut u = url::Url::parse(base).expect("base url");
     u.path_segments_mut().expect("base url path").pop_if_empty().extend(segs);
     if !q.is_empty() {
@@ -98,7 +100,13 @@ async fn token_request(form: &[(&str, &str)]) -> Result<Tok> {
 
 /// Interactive Google sign-in. `open` is given the URL to show in the system browser.
 pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<auth::Account> {
+    sign_in_with(open, false, None).await
+}
+
+/// Google sign-in that can also ask for permission to manage Gmail filters (mail rules).
+pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hint: Option<&str>) -> Result<auth::Account> {
     let (client_id, secret) = client()?;
+    let scope = if rules { format!("{SCOPES} {FILTERS_SCOPE}") } else { SCOPES.to_string() };
     let verifier = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
     let challenge = auth::b64(&<sha2::Sha256 as sha2::Digest>::digest(verifier.as_bytes()));
     let state = uuid::Uuid::new_v4().simple().to_string();
@@ -110,12 +118,15 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<auth::Acco
         .append_pair("client_id", &client_id)
         .append_pair("redirect_uri", &redirect)
         .append_pair("response_type", "code")
-        .append_pair("scope", SCOPES)
+        .append_pair("scope", &scope)
         .append_pair("state", &state)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
         .append_pair("access_type", "offline")
         .append_pair("prompt", "consent select_account");
+    if let Some(h) = hint {
+        u.query_pairs_mut().append_pair("login_hint", h);
+    }
     open(u.as_str())?;
 
     let code = tokio::time::timeout(Duration::from_secs(300), auth::wait_for_code(&listener, &state))
@@ -136,13 +147,16 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<auth::Acco
     if !tok.scope.as_deref().unwrap_or_default().contains("gmail.modify") {
         bail!("Graphite Mail needs permission to read and manage your Gmail. Please try again and tick every box on the Google permission screen.");
     }
+    if rules && !tok.scope.as_deref().unwrap_or_default().contains("gmail.settings.basic") {
+        bail!("Rules need the \"manage your Gmail settings\" permission. Please try again and tick every box on the Google permission screen.");
+    }
     let rt = tok.refresh_token.clone().ok_or_else(|| {
         anyhow!("Google didn't give Graphite Mail a long-lasting sign-in. Remove Graphite Mail at myaccount.google.com/permissions and try again.")
     })?;
 
     let me: Value = crate::http::client().get(USERINFO_URL).bearer_auth(&tok.access_token).send().await?.error_for_status()?.json().await?;
     let email = me["email"].as_str().ok_or_else(|| anyhow!("Google didn't tell us the account's email address."))?.to_string();
-    let acc = auth::Account { display_name: me["name"].as_str().unwrap_or(&email).to_string(), email, provider: "google".into() };
+    let acc = auth::Account { display_name: me["name"].as_str().unwrap_or(&email).to_string(), email, provider: "google".into(), rules };
     auth::remember(&acc, &rt)?;
     auth::cache_token(&acc.email, &tok.access_token, tok.expires_in);
     Ok(acc)
@@ -164,7 +178,7 @@ pub async fn access_token(email: &str) -> Result<String> {
 // ---------------------------------------------------------------- HTTP
 
 /// Any status comes back as data, so callers can decide (the offline queue needs the raw status).
-async fn call(method: Method, url: &str, body: Option<Value>) -> Result<(u16, Value)> {
+pub(crate) async fn call(method: Method, url: &str, body: Option<Value>) -> Result<(u16, Value)> {
     let token = auth::access_token().await?;
     let mut req = crate::http::client().request(method, url).bearer_auth(token);
     if let Some(b) = body {
@@ -1163,15 +1177,15 @@ pub fn new_event_payload(title: &str, start: i64, end: i64, all_day: bool, locat
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    type Log = Arc<Mutex<Vec<(String, String, Value)>>>;
+    pub(crate) type Log = Arc<Mutex<Vec<(String, String, Value)>>>;
 
     /// A pretend Google: `route(method, path+query, body)` answers; every request is recorded.
-    async fn fake_google(route: impl Fn(&str, &str, &Value) -> (u16, Value) + Send + Sync + 'static) -> (String, Log) {
+    pub(crate) async fn fake_google(route: impl Fn(&str, &str, &Value) -> (u16, Value) + Send + Sync + 'static) -> (String, Log) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let log: Log = Arc::new(Mutex::new(vec![]));

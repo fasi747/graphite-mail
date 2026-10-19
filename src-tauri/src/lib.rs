@@ -7,6 +7,7 @@ mod mail;
 mod notify;
 mod migrate;
 mod outbox;
+mod rules;
 mod storage;
 mod sync;
 
@@ -198,6 +199,47 @@ async fn move_data_folder(app: tauri::AppHandle, target: String) -> CmdResult<St
 }
 
 #[tauri::command]
+fn list_rules() -> CmdResult<Vec<rules::RuleView>> {
+    rules::list().map_err(|e| e.to_string())
+}
+
+/// Creates a rule, or updates it when it has an id.
+#[tauri::command]
+async fn save_rule(rule: rules::Rule) -> CmdResult<()> {
+    if rule.id.is_some() { rules::update(rule).await } else { rules::create(rule).await.map(|_| ()) }.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_rule(id: String) -> CmdResult<()> {
+    rules::delete(&id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_rule_enabled(id: String, on: bool) -> CmdResult<()> {
+    rules::set_enabled(&id, on).await.map_err(|e| e.to_string())
+}
+
+/// Applies a rule to the mail already in a folder; returns how many messages it matched.
+#[tauri::command]
+async fn run_rule(id: String, folder_id: String) -> CmdResult<usize> {
+    let n = rules::run_now(&id, &folder_id).map_err(|e| e.to_string())?;
+    let _ = outbox::replay().await;
+    Ok(n)
+}
+
+/// One-time extra permission for mail rules on one account (opens the browser).
+#[tauri::command]
+async fn enable_rules(app: tauri::AppHandle, email: String) -> CmdResult<Account> {
+    let open = |url: &str| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()));
+    let provider = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).map(|a| a.provider).ok_or("Unknown account")?;
+    let acc = if provider == "google" { google::sign_in_with(open, true, Some(&email)).await } else { auth::sign_in_with(open, true, Some(&email)).await }.map_err(|e| e.to_string())?;
+    if !acc.email.eq_ignore_ascii_case(&email) {
+        return Err(format!("You signed in as {}, but this rule belongs to {email}. Please try again with {email}.", acc.email));
+    }
+    Ok(acc)
+}
+
+#[tauri::command]
 fn list_calendars() -> CmdResult<Vec<calendar::Calendar>> {
     calendar::calendars().map_err(|e| e.to_string())
 }
@@ -324,6 +366,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_accounts,
+            list_rules,
+            save_rule,
+            delete_rule,
+            set_rule_enabled,
+            run_rule,
+            enable_rules,
             remove_account,
             add_google_account,
             get_notifications,

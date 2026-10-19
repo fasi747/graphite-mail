@@ -50,6 +50,24 @@ You can use more than one account at the same time.
 - Forwarding does not include the original attachments (Gmail doesn't do that for apps).
 - Google Calendar works like the Microsoft calendar; **Google Meet video call** adds a Meet link to a new event.
 
+## Rules
+
+**Home → Rules** lets you make mail sort itself, for example "everything from my bank goes into the Bank folder".
+
+1. Pick the account (rules belong to one account) and click **New rule**.
+2. Choose when it applies: *From*, *Subject*, *To/Cc* or *words in the message* contain some text. If you fill in more than one, all of them must match.
+3. Choose what to do: move to a folder, mark as read, star / mark important, or delete (to Trash).
+4. **Save rule.**
+
+The first time, Graphite Mail asks you to **Allow rules** for that account: one more sign-in in your browser to give the extra permission.
+
+Rules are stored at Microsoft (Outlook inbox rules) or Google (Gmail filters), so they keep working **even when Graphite Mail is closed**. They apply to mail that arrives from then on. To use a rule on mail you already have, click **Run on existing mail…** and choose the folder.
+
+Good to know:
+- Outlook rules can't set a flag, so "flag" becomes **Mark as important** there. On Gmail it **stars** the message.
+- Gmail filters have no off switch: a rule you switch off is removed from Gmail and put back when you switch it on.
+- Rules you made in Outlook on the web or in Gmail settings don't show up in this list yet.
+
 ## Everyday use
 
 | To do this | Do this |
