@@ -75,6 +75,7 @@ pub async fn sync_all() -> Result<SyncReport> {
         rep.messages_changed += sync_folder_messages(&account_id, &fid, &remote, delta).await?;
     }
     rep.bodies_downloaded = hydrate_bodies(200).await?;
+    let _ = backfill_inline(100).await;
     rep.events = crate::calendar::sync().await.unwrap_or(0);
     Ok(rep)
 }
@@ -248,8 +249,14 @@ pub async fn hydrate_bodies(limit: usize) -> Result<usize> {
         let html = v["body"]["content"].as_str().unwrap_or_default();
         let hash = write_blob(html.as_bytes(), "html")?;
         let text = strip_html(html);
+        // Inline pictures arrive as attachments; fetch them now so they show offline. If this fails,
+        // leave inline_done=0 so the next pass tries again.
+        let inline_done = !has_cid(html) || fetch_inline_images(&id, &rid).await.is_ok();
         storage::with_db(|db| {
-            db.execute("UPDATE messages SET body_blob_hash=?1, body_cached=1 WHERE id=?2", params![hash, id])?;
+            db.execute(
+                "UPDATE messages SET body_blob_hash=?1, body_cached=1, inline_done=?3 WHERE id=?2",
+                params![hash, id, inline_done],
+            )?;
             db.execute("DELETE FROM messages_fts WHERE message_id=?1", [&id])?;
             db.execute(
                 "INSERT INTO messages_fts(message_id,subject,sender_name,sender_address,body_plaintext) VALUES(?1,?2,?3,?4,?5)",
@@ -262,8 +269,81 @@ pub async fn hydrate_bodies(limit: usize) -> Result<usize> {
     Ok(n)
 }
 
+/// True when the HTML refers to embedded (cid:) pictures.
+pub fn has_cid(html: &str) -> bool {
+    html.to_ascii_lowercase().contains("cid:")
+}
+
+/// Downloads the inline (cid:) pictures of one message and stores them in the blob store.
+async fn fetch_inline_images(message_id: &str, remote_id: &str) -> Result<usize> {
+    let list = get(&format!("{GRAPH}/me/messages/{remote_id}/attachments?$top=50")).await?;
+    let mut n = 0;
+    storage::with_db(|db| Ok(db.execute("DELETE FROM attachments WHERE message_id=?1 AND is_inline=1", [message_id])?))?;
+    for a in list["value"].as_array().cloned().unwrap_or_default() {
+        if a["@odata.type"].as_str() != Some("#microsoft.graph.fileAttachment") {
+            continue;
+        }
+        let Some(cid) = a["contentId"].as_str().filter(|c| !c.is_empty()) else { continue };
+        let aid = a["id"].as_str().unwrap_or_default();
+        // The list can leave out the bytes of larger files; ask for the single attachment then.
+        let bytes_b64 = match a["contentBytes"].as_str() {
+            Some(b) => b.to_string(),
+            None => get(&format!("{GRAPH}/me/messages/{remote_id}/attachments/{aid}")).await?["contentBytes"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        };
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, bytes_b64.as_bytes())?;
+        let blob = write_blob(&bytes, "bin")?;
+        storage::with_db(|db| {
+            db.execute(
+                "INSERT INTO attachments(id,message_id,remote_attachment_id,filename,mime_type,size_bytes,content_id,is_inline,blob_hash,is_downloaded)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,1,?8,1)",
+                params![
+                    uuid::Uuid::new_v4().to_string(), message_id, aid,
+                    a["name"].as_str().unwrap_or("image"), a["contentType"].as_str().unwrap_or("application/octet-stream"),
+                    bytes.len() as i64, cid, blob
+                ],
+            )?;
+            Ok(())
+        })?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// Messages saved before inline pictures were supported: check their saved body, fetch pictures where needed.
+async fn backfill_inline(limit: usize) -> Result<usize> {
+    let todo: Vec<(String, String, String)> = storage::with_db(|db| {
+        let mut st = db.prepare(
+            "SELECT id, remote_id, body_blob_hash FROM messages
+             WHERE body_cached=1 AND inline_done=0 AND remote_id IS NOT NULL AND body_blob_hash IS NOT NULL
+             ORDER BY received_at DESC LIMIT ?1",
+        )?;
+        let rows = st.query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    })?;
+    let mut fetched = 0;
+    for (id, rid, hash) in todo {
+        let html = read_blob(&hash, "html").map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        let ok = if has_cid(&html) { fetched += 1; fetch_inline_images(&id, &rid).await.is_ok() } else { true };
+        if ok {
+            storage::with_db(|db| Ok(db.execute("UPDATE messages SET inline_done=1 WHERE id=?1", [&id])?))?;
+        }
+        if fetched >= 25 {
+            break;
+        }
+    }
+    Ok(fetched)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn finds_cid_references() {
+        assert!(super::has_cid("<img src=\"CID:abc\">"));
+        assert!(!super::has_cid("<img src=\"https://x/y.png\">"));
+    }
     #[test]
     fn strips_html() {
         assert_eq!(super::strip_html("<p>Hello <b>there</b></p>\n<br>world"), "Hello there world");

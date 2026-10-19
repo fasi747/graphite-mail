@@ -87,7 +87,22 @@ pub fn open_existing() -> Result<bool> {
 fn open_db(root: &Path) -> Result<()> {
     let conn = Connection::open(root.join("db").join("mail_core.sqlite"))?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     *DB.lock().unwrap() = Some(conn);
+    Ok(())
+}
+
+/// Small in-place upgrades for databases created by older versions.
+fn migrate(conn: &Connection) -> Result<()> {
+    let has = |table: &str, col: &str| -> Result<bool> {
+        let mut st = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let names: Vec<String> = st.query_map([], |r| r.get(1))?.collect::<Result<_, _>>()?;
+        Ok(names.iter().any(|n| n == col))
+    };
+    if !has("messages", "inline_done")? {
+        // 0 = embedded pictures not fetched yet (checked on the next sync).
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN inline_done INTEGER DEFAULT 0")?;
+    }
     Ok(())
 }
 

@@ -112,12 +112,57 @@ pub fn message(id: &str) -> Result<MessageDetail> {
         )?)
     })?;
     let body_html = hash.and_then(|h| sync::read_blob(&h, "html").ok()).map(|b| String::from_utf8_lossy(&b).into_owned());
+    let body_html = body_html.map(|html| {
+        if !sync::has_cid(&html) {
+            return html;
+        }
+        let pics: Vec<(String, String, Vec<u8>)> = storage::with_db(|db| {
+            let mut st = db.prepare("SELECT content_id, mime_type, blob_hash FROM attachments WHERE message_id=?1 AND is_inline=1 AND blob_hash IS NOT NULL")?;
+            let rows = st.query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(cid, mime, hash)| Some((cid, mime, sync::read_blob(&hash, "bin").ok()?)))
+        .collect();
+        inline_cids(&html, &pics)
+    });
     Ok(MessageDetail { row, to_json: to, cc_json: cc, body_html })
+}
+
+/// Replaces `cid:` picture references with the downloaded pictures, embedded as data: URLs.
+fn inline_cids(html: &str, pics: &[(String, String, Vec<u8>)]) -> String {
+    use base64::Engine;
+    let mut out = html.to_string();
+    for (cid, mime, bytes) in pics {
+        let cid = cid.trim_matches(|c| c == '<' || c == '>');
+        let data = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes));
+        // Mail apps write the id as-is or percent-encoded, in any letter case.
+        for key in [cid.to_string(), url::form_urlencoded::byte_serialize(cid.as_bytes()).collect::<String>()] {
+            let needle = format!("cid:{key}").to_ascii_lowercase();
+            let mut start = 0;
+            while let Some(pos) = out.to_ascii_lowercase()[start..].find(&needle) {
+                let at = start + pos;
+                out.replace_range(at..at + needle.len(), &data);
+                start = at + data.len();
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embeds_cid_pictures() {
+        let html = r#"<img src="cid:logo@01D"><img src="CID:Logo@01D"><img src="cid:other">"#;
+        let out = inline_cids(html, &[("<logo@01D>".into(), "image/png".into(), vec![1, 2, 3])]);
+        assert_eq!(out.matches("data:image/png;base64,AQID").count(), 2);
+        assert!(out.contains("cid:other")); // unknown pictures are left alone
+    }
+
     #[test]
     fn local_queries_and_search() {
         let tmp = std::env::temp_dir().join(format!("gm-test-{}", uuid::Uuid::new_v4()));
