@@ -71,6 +71,11 @@ export default function App() {
     invoke<Account | null>("current_account").then(setAccount);
   }, []);
 
+  // Tell the shell the first screen is up, so the splash can hand over.
+  useEffect(() => {
+    if (setup || error) invoke("app_ready").catch(() => {});
+  }, [setup, error]);
+
   async function signIn() {
     setBusy(true);
     setError("");

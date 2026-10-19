@@ -28,4 +28,8 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 ## v1.3 — rules
 - [x] Server-side rules: Outlook inbox rules + Gmail filters (conditions: from, subject, to/cc, words; actions: move, mark read, flag/star/important, delete)
 - [x] "Run on existing mail" (applied locally, sent to the server through the offline queue)
-- [ ] Tested with real accounts
+- [ ] Tested with real accounts (rules)
+
+## v1.4 — new logo and splash
+- [x] New logo (vector sources in `assets/`), app icon regenerated, README logo
+- [x] Animated splash screen; the main window stays hidden until the animation (3.4 s) has finished and the UI is ready

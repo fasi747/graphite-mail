@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Graphite Mail</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  @font-face { font-family: "InterSplash"; src: url("/fonts/inter.woff2") format("woff2"); font-weight: 100 900; }
+  :root { --ease-out: cubic-bezier(.2,.8,.2,1); --spring: cubic-bezier(.34,1.56,.64,1); --total: 3.4s; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; user-select: none; cursor: default; }
+  body { font-family: "InterSplash", system-ui, sans-serif; display: grid; place-items: center;
+         background: radial-gradient(circle at 50% 42%, #f4f8fd 0%, #ffffff 62%); }
+  .stage { display: flex; flex-direction: column; align-items: center; animation: leave .35s ease-in 3.05s forwards; }
+  svg { width: 300px; height: auto; overflow: visible; }
+  .piece { opacity: 0; }
+  .left   { animation: fromLeft  .65s var(--ease-out) .15s forwards; }
+  .right  { animation: fromRight .65s var(--ease-out) .15s forwards; }
+  .bottom { animation: fromBelow .65s var(--ease-out) .35s forwards; }
+  .flap   { transform-box: fill-box; transform-origin: 50% 0%; animation: unfold .75s var(--spring) .7s forwards; }
+  .env    { transform-box: fill-box; transform-origin: 50% 50%; animation: pop .55s ease-in-out 1.45s; }
+  .shine  { animation: sweep .9s ease-in-out 1.55s forwards; opacity: 0; }
+  @keyframes fromLeft  { from { opacity: 0; transform: translateX(-80px); } to { opacity: 1; transform: none; } }
+  @keyframes fromRight { from { opacity: 0; transform: translateX(80px); }  to { opacity: 1; transform: none; } }
+  @keyframes fromBelow { from { opacity: 0; transform: translateY(70px); } to { opacity: 1; transform: none; } }
+  @keyframes unfold    { from { opacity: 0; transform: scaleY(0); } 25% { opacity: 1; } to { opacity: 1; transform: scaleY(1); } }
+  @keyframes pop       { 0%, 100% { transform: scale(1); } 45% { transform: scale(1.045); } }
+  @keyframes sweep     { 0% { opacity: 0; transform: translateX(-340px) skewX(-20deg); } 15% { opacity: .55; } 85% { opacity: .55; } 100% { opacity: 0; transform: translateX(560px) skewX(-20deg); } }
+  .word { margin-top: 26px; font-size: 44px; font-weight: 600; letter-spacing: -.02em; color: #3b4556; display: flex; gap: .28em; }
+  .word span { opacity: 0; transform: translateY(16px); animation: rise .6s var(--ease-out) forwards; }
+  .word .mail { color: #6c9bdf; animation-delay: 1.7s; }
+  .word .graphite { animation-delay: 1.55s; }
+  .tag { margin-top: 8px; font-size: 17px; color: #566077; opacity: 0; transform: translateY(10px); animation: rise .6s var(--ease-out) 2.05s forwards; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  .bar { margin-top: 34px; width: 180px; height: 3px; border-radius: 3px; background: #e8eef6; overflow: hidden; opacity: 0; animation: fadein .4s ease-out .4s forwards; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, #6c9bdf, #6ecdb7); animation: fill 2.8s cubic-bezier(.45,.05,.35,1) .4s forwards; }
+  @keyframes fadein { to { opacity: 1; } }
+  @keyframes fill { to { width: 100%; } }
+  @keyframes leave { to { opacity: 0; transform: scale(.985); } }
+  @media (prefers-reduced-motion: reduce) {
+    .piece, .word span, .tag { animation-duration: .01s !important; animation-delay: 0s !important; opacity: 1 !important; transform: none !important; }
+    .env, .shine { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <svg viewBox="200 150 680 480" aria-hidden="true">
+    <defs>
+      <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="222" y1="0" x2="862" y2="0">
+        <stop offset="0" stop-color="#6C9BDF"/><stop offset="1" stop-color="#6ECDB7"/>
+      </linearGradient>
+      <clipPath id="shape">
+        <path d="M236 168 H850 Q860 168 853 175 L578 438 Q540 480 502 438 L227 175 Q220 168 236 168 Z"/>
+        <path d="M222 224 L410 396 L222 578 Z"/><path d="M862 224 L672 396 L862 578 Z"/>
+        <path d="M438 424 L518 494 Q540 508 562 494 L646 424 L836 603 L252 603 Z"/>
+      </clipPath>
+      <linearGradient id="sh" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    </defs>
+    <g class="env" fill="url(#g)">
+      <path class="piece left"   d="M222 224 L410 396 L222 578 Z"/>
+      <path class="piece right"  d="M862 224 L672 396 L862 578 Z"/>
+      <path class="piece bottom" d="M438 424 L518 494 Q540 508 562 494 L646 424 L836 603 L252 603 Z"/>
+      <path class="piece flap"   d="M236 168 H850 Q860 168 853 175 L578 438 Q540 480 502 438 L227 175 Q220 168 236 168 Z"/>
+      <g clip-path="url(#shape)"><rect class="shine" x="200" y="140" width="140" height="480" fill="url(#sh)"/></g>
+    </g>
+  </svg>
+  <div class="word"><span class="graphite">Graphite</span><span class="mail">Mail</span></div>
+  <div class="tag">For Office 365 &amp; Gmail</div>
+  <div class="bar"><i></i></div>
+</div>
+</body>
+</html>

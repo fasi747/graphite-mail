@@ -317,6 +317,16 @@ fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
     }
 }
 
+/// The UI has drawn its first screen; the splash may hand over to the main window.
+static UI_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How long the splash animation (public/splash.html) runs.
+const SPLASH_MS: u64 = 3400;
+
+#[tauri::command]
+fn app_ready() {
+    UI_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Lets the UI report JavaScript errors to the terminal for debugging.
 #[tauri::command]
 fn log_js(message: String) {
@@ -365,6 +375,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            app_ready,
             list_accounts,
             list_rules,
             save_rule,
@@ -412,9 +423,41 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let cfg = app.config().app.windows[0].clone();
-            tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
+            // The main window loads in the background, hidden, while the splash animation plays.
+            let main = tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
+                .visible(false)
                 .on_navigation(move |url| allow_navigation(&handle, url))
                 .build()?;
+            match tauri::WebviewWindowBuilder::new(app, "splash", tauri::WebviewUrl::App("splash.html".into()))
+                .title("Graphite Mail")
+                .inner_size(520.0, 520.0)
+                .decorations(false)
+                .resizable(false)
+                .center()
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .build()
+            {
+                Ok(splash) => {
+                    tauri::async_runtime::spawn(async move {
+                        // Wait for the whole animation, and for the UI to be ready (but never longer than 12 s).
+                        tokio::time::sleep(std::time::Duration::from_millis(SPLASH_MS)).await;
+                        for _ in 0..180 {
+                            if UI_READY.load(std::sync::atomic::Ordering::SeqCst) {
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                        let _ = main.show();
+                        let _ = main.set_focus();
+                        let _ = splash.close();
+                    });
+                }
+                Err(e) => {
+                    eprintln!("[graphite] splash window failed: {e}");
+                    let _ = main.show();
+                }
+            }
             spawn_sync_loop(app.handle().clone());
             Ok(())
         })

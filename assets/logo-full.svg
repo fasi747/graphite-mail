@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+  <rect width="1080" height="1080" fill="#ffffff"/>
+  <defs>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="222" y1="0" x2="862" y2="0">
+      <stop offset="0" stop-color="#6C9BDF"/>
+      <stop offset="1" stop-color="#6ECDB7"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#g)">
+    <path d="M236 168 H850 Q860 168 853 175 L578 438 Q540 480 502 438 L227 175 Q220 168 236 168 Z"/>
+    <path d="M222 224 L410 396 L222 578 Z"/>
+    <path d="M862 224 L672 396 L862 578 Z"/>
+    <path d="M438 424 L518 494 Q540 508 562 494 L646 424 L836 603 L252 603 Z"/>
+  </g>
+  <g font-family="Inter, 'Inter Variable', Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="540" y="780" font-size="150" font-weight="600" letter-spacing="-3"><tspan fill="#3B4556">Graphite </tspan><tspan fill="#6C9BDF">Mail</tspan></text>
+    <text x="540" y="898" font-size="58" font-weight="400" fill="#566077">For Office 365 &amp; Gmail</text>
+  </g>
+</svg>
