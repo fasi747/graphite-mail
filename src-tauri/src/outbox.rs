@@ -26,10 +26,17 @@ fn account_id() -> Result<String> {
 }
 
 fn enqueue(db: &rusqlite::Connection, entity: &str, op: &str, payload: Value) -> Result<()> {
+    enqueue_as(db, entity, op, payload, auth::active_email())
+}
+
+/// Queues an action for the account that owns the message (or `email` for brand-new mail).
+fn enqueue_as(db: &rusqlite::Connection, entity: &str, op: &str, payload: Value, email: Option<String>) -> Result<()> {
     db.execute(
         "INSERT INTO offline_mutation_queue(account_id,entity_type,local_entity_id,operation,payload_json,created_at)
-         VALUES((SELECT id FROM accounts ORDER BY created_at LIMIT 1),'MESSAGE',?1,?2,?3,?4)",
-        params![entity, op, payload.to_string(), now()],
+         VALUES(COALESCE((SELECT account_id FROM messages WHERE id=?1),
+                         (SELECT id FROM accounts WHERE lower(email)=lower(?5)),
+                         (SELECT id FROM accounts ORDER BY created_at LIMIT 1)),'MESSAGE',?1,?2,?3,?4)",
+        params![entity, op, payload.to_string(), now(), email],
     )?;
     Ok(())
 }
@@ -129,6 +136,9 @@ pub struct Draft {
     pub cc: Vec<String>,
     pub subject: String,
     pub html: String,
+    /// Account to send from (email). Replies always go from the account that received the message.
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 /// Queue an outgoing message; it is sent immediately when online, otherwise on reconnect.
@@ -139,11 +149,12 @@ pub fn send(d: Draft) -> Result<()> {
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     storage::with_db(|db| {
-        enqueue(
+        enqueue_as(
             db,
             &entity,
             "SEND",
             json!({ "mode": d.mode, "to": d.to, "cc": d.cc, "subject": d.subject, "html": d.html }),
+            d.from.clone().or_else(auth::active_email),
         )
     })
 }
@@ -258,6 +269,7 @@ fn graph_base() -> String {
 static REPLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct Item {
+    email: Option<String>,
     seq: i64,
     entity: String,
     op: String,
@@ -307,11 +319,13 @@ pub async fn replay() -> Result<usize> {
     storage::with_db(coalesce)?;
     let items: Vec<Item> = storage::with_db(|db| {
         let mut st = db.prepare(
-            "SELECT seq_id, local_entity_id, operation, payload_json FROM offline_mutation_queue
-             WHERE failed=0 AND next_retry_at <= ?1 ORDER BY seq_id",
+            "SELECT q.seq_id, q.local_entity_id, q.operation, q.payload_json, a.email
+             FROM offline_mutation_queue q LEFT JOIN accounts a ON a.id=q.account_id
+             WHERE q.failed=0 AND q.next_retry_at <= ?1 ORDER BY q.seq_id",
         )?;
         let rows = st.query_map([now()], |r| {
             Ok(Item {
+                email: r.get(4)?,
                 seq: r.get(0)?,
                 entity: r.get(1)?,
                 op: r.get(2)?,
@@ -336,7 +350,7 @@ pub async fn replay() -> Result<usize> {
         let rid = rid.or_else(|| it.payload["remote_id"].as_str().map(String::from));
         let p = &it.payload;
         use reqwest::Method;
-        let result = match (it.op.as_str(), &rid) {
+        let result = auth::in_account(it.email.clone(), async { match (it.op.as_str(), &rid) {
             ("SET_READ", Some(r)) => {
                 call(
                     Method::PATCH,
@@ -422,7 +436,7 @@ pub async fn replay() -> Result<usize> {
             }
             (_, None) => Ok((404, Value::Null)), // item no longer exists remotely
             _ => Ok((400, Value::Null)),
-        };
+        } }).await;
 
         match result {
             Ok((s, v)) if matches!(verdict(&it.op, s), Verdict::Done) => {

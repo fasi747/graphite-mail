@@ -14,6 +14,7 @@ pub struct Folder {
     well_known: Option<String>,
     unread: i64,
     total: i64,
+    account_email: String,
 }
 
 #[derive(Serialize)]
@@ -57,9 +58,10 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<MessageRow> {
 pub fn folders() -> Result<Vec<Folder>> {
     storage::with_db(|db| {
         let mut st = db.prepare(
-            "SELECT id, remote_id, parent_remote_id, display_name, well_known_name, unread_count, total_count FROM folders
-             ORDER BY CASE well_known_name WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sentitems' THEN 2
-               WHEN 'archive' THEN 3 WHEN 'deleteditems' THEN 4 WHEN 'junkemail' THEN 5 ELSE 9 END, display_name",
+            "SELECT f.id, f.remote_id, f.parent_remote_id, f.display_name, f.well_known_name, f.unread_count, f.total_count, a.email
+             FROM folders f JOIN accounts a ON a.id=f.account_id
+             ORDER BY a.created_at, CASE well_known_name WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sentitems' THEN 2
+               WHEN 'archive' THEN 3 WHEN 'deleteditems' THEN 4 WHEN 'junkemail' THEN 5 ELSE 9 END, f.display_name",
         )?;
         let rows = st.query_map([], |r| {
             Ok(Folder {
@@ -70,16 +72,23 @@ pub fn folders() -> Result<Vec<Folder>> {
                 well_known: r.get(4)?,
                 unread: r.get(5)?,
                 total: r.get(6)?,
+                account_email: r.get(7)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })
 }
 
+/// Messages in one folder, newest first. The special id "all-inboxes" combines every account's Inbox.
 pub fn messages(folder_id: &str, offset: i64, limit: i64) -> Result<Vec<MessageRow>> {
     storage::with_db(|db| {
+        let filter = if folder_id == "all-inboxes" {
+            "m.folder_id IN (SELECT id FROM folders WHERE well_known_name='inbox' AND ?1 IS NOT NULL)"
+        } else {
+            "m.folder_id=?1"
+        };
         let mut st = db.prepare(&format!(
-            "SELECT {ROW_COLS} FROM messages m WHERE m.folder_id=?1 ORDER BY m.received_at DESC LIMIT ?2 OFFSET ?3"
+            "SELECT {ROW_COLS} FROM messages m WHERE {filter} ORDER BY m.received_at DESC LIMIT ?2 OFFSET ?3"
         ))?;
         let rows = st.query_map(params![folder_id, limit, offset], map_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -206,5 +215,31 @@ mod tests {
         assert_eq!(search("capex", 10).unwrap()[0].id, "m1");
         assert_eq!(search("bud", 10).unwrap().len(), 1); // prefix match
         assert!(search("\"broken( query", 10).is_ok()); // hostile input is safe
+    }
+
+    #[test]
+    fn two_accounts_all_inboxes_and_queue_ownership() {
+        let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("gm-multi-{}", uuid::Uuid::new_v4()));
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
+        storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
+        storage::with_db(|db| {
+            db.execute_batch(
+                "INSERT INTO accounts VALUES('a1','work@x.com','Work',1),('a2','home@y.com','Home',2);
+                 INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('i1','a1','r1','Inbox','inbox'),('i2','a2','r2','Inbox','inbox'),('p2','a2','r3','Projects',NULL);
+                 INSERT INTO messages(id,account_id,folder_id,remote_id,subject,received_at) VALUES
+                   ('w','a1','i1','m1','Work mail',100),('h','a2','i2','m2','Home mail',200),('x','a2','p2','m3','Elsewhere',300);",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let all: Vec<String> = messages("all-inboxes", 0, 50).unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(all, vec!["h", "w"]); // both inboxes, newest first, other folders excluded
+        let f = folders().unwrap();
+        assert_eq!(f.iter().filter(|f| f.account_email == "home@y.com").count(), 2);
+        // A change to the home account's message is queued under the home account.
+        crate::outbox::set_flag("h", true).unwrap();
+        let owner: String = storage::with_db(|db| Ok(db.query_row("SELECT account_id FROM offline_mutation_queue", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(owner, "a2");
     }
 }

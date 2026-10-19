@@ -73,31 +73,84 @@ pub struct SyncReport {
 /// Only one sync at a time; a data-folder move also takes this so nothing is saved mid-move.
 pub static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Full sync pass: folders → message deltas → bodies.
+/// Deletes everything downloaded for an account (its folders, mail, calendars cascade from the account row).
+pub fn forget_account_data(email: &str) -> Result<()> {
+    storage::with_db(|db| {
+        db.execute(
+            "DELETE FROM messages_fts WHERE message_id IN (SELECT m.id FROM messages m JOIN accounts a ON a.id=m.account_id WHERE lower(a.email)=lower(?1))",
+            [email],
+        )?;
+        db.execute("DELETE FROM accounts WHERE lower(email)=lower(?1)", [email])?;
+        Ok(())
+    })
+}
+
+pub fn ensure_account_pub(acc: &auth::Account) -> Result<String> {
+    ensure_account(acc)
+}
+
+/// Full sync pass for every signed-in account: replay offline changes, then folders → messages → bodies → calendar.
 pub async fn sync_all() -> Result<SyncReport> {
     let _only_one = SYNC_LOCK.lock().await;
-    let acc = auth::current_account().ok_or(anyhow!("Not signed in"))?;
-    let account_id = ensure_account(&acc)?;
+    let accounts = auth::accounts();
+    if accounts.is_empty() {
+        return Err(anyhow!("Not signed in"));
+    }
     let mut rep = SyncReport::default();
     // Replay offline actions before pulling, so server state never overwrites local changes.
     match crate::outbox::replay().await {
         Ok(n) => rep.replayed = n,
         Err(e) => rep.replay_error = Some(e.to_string()),
     }
-    rep.folders = sync_folders(&account_id).await?;
+    let mut errors = vec![];
+    for acc in &accounts {
+        let account_id = ensure_account(acc)?;
+        let r = if acc.provider == "google" {
+            auth::in_account(Some(acc.email.clone()), crate::google::sync_account(&account_id)).await
+        } else {
+            auth::in_account(Some(acc.email.clone()), sync_microsoft(&account_id)).await
+        };
+        match r {
+            Ok(part) => {
+                rep.folders += part.folders;
+                rep.messages_changed += part.messages_changed;
+                rep.bodies_downloaded += part.bodies_downloaded;
+                rep.events += part.events;
+                if part.calendar_error.is_some() {
+                    rep.calendar_error = part.calendar_error;
+                }
+            }
+            Err(e) => {
+                eprintln!("[graphite] sync of {} failed: {e}", acc.email);
+                errors.push(format!("{}: {e}", acc.email));
+            }
+        }
+    }
+    if errors.len() == accounts.len() {
+        return Err(anyhow!(errors.join("; ")));
+    }
+    if !errors.is_empty() {
+        rep.calendar_error = Some(errors.join("; "));
+    }
+    Ok(rep)
+}
 
+/// One Microsoft 365 account (runs inside auth::in_account for that account).
+async fn sync_microsoft(account_id: &str) -> Result<SyncReport> {
+    let mut rep = SyncReport::default();
+    rep.folders = sync_folders(account_id).await?;
     let folders: Vec<(String, String, Option<String>)> = storage::with_db(|db| {
         let mut st =
             db.prepare("SELECT id, remote_id, delta_link FROM folders WHERE account_id=?1")?;
-        let rows = st.query_map([&account_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let rows = st.query_map([account_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
     for (fid, remote, delta) in folders {
-        rep.messages_changed += sync_folder_messages(&account_id, &fid, &remote, delta).await?;
+        rep.messages_changed += sync_folder_messages(account_id, &fid, &remote, delta).await?;
     }
-    rep.bodies_downloaded = hydrate_bodies(200).await?;
-    let _ = backfill_inline(100).await;
-    match crate::calendar::sync().await {
+    rep.bodies_downloaded = hydrate_bodies(account_id, 200).await?;
+    let _ = backfill_inline(account_id, 100).await;
+    match crate::calendar::sync(account_id).await {
         Ok(n) => rep.events = n,
         Err(e) => {
             eprintln!("[graphite] calendar sync failed: {e}");
@@ -294,13 +347,13 @@ pub fn read_blob(hash: &str, ext: &str) -> Result<Vec<u8>> {
 }
 
 /// Downloads full HTML bodies for newest messages first so mail is readable offline.
-pub async fn hydrate_bodies(limit: usize) -> Result<usize> {
+pub async fn hydrate_bodies(account_id: &str, limit: usize) -> Result<usize> {
     let pending: Vec<(String, String, String, String, String)> = storage::with_db(|db| {
         let mut st = db.prepare(
             "SELECT id, remote_id, COALESCE(subject,''), COALESCE(sender_name,''), COALESCE(sender_address,'')
-             FROM messages WHERE body_cached=0 AND remote_id IS NOT NULL ORDER BY received_at DESC LIMIT ?1",
+             FROM messages WHERE account_id=?2 AND body_cached=0 AND remote_id IS NOT NULL ORDER BY received_at DESC LIMIT ?1",
         )?;
-        let rows = st.query_map([limit as i64], |r| {
+        let rows = st.query_map(params![limit as i64, account_id], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -394,14 +447,14 @@ async fn fetch_inline_images(message_id: &str, remote_id: &str) -> Result<usize>
 }
 
 /// Messages saved before inline pictures were supported: check their saved body, fetch pictures where needed.
-async fn backfill_inline(limit: usize) -> Result<usize> {
+async fn backfill_inline(account_id: &str, limit: usize) -> Result<usize> {
     let todo: Vec<(String, String, String)> = storage::with_db(|db| {
         let mut st = db.prepare(
             "SELECT id, remote_id, body_blob_hash FROM messages
-             WHERE body_cached=1 AND inline_done=0 AND remote_id IS NOT NULL AND body_blob_hash IS NOT NULL
+             WHERE account_id=?2 AND body_cached=1 AND inline_done=0 AND remote_id IS NOT NULL AND body_blob_hash IS NOT NULL
              ORDER BY received_at DESC LIMIT ?1",
         )?;
-        let rows = st.query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let rows = st.query_map(params![limit as i64, account_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
     let mut fetched = 0;

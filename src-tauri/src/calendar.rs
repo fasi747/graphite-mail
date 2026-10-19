@@ -2,7 +2,7 @@
 
 use crate::{auth, storage};
 use anyhow::{Result, anyhow};
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -64,17 +64,8 @@ fn color_for(c: &Value, i: usize) -> String {
     .to_string()
 }
 
-pub async fn sync() -> Result<usize> {
-    let account_id: String = storage::with_db(|db| {
-        Ok(db
-            .query_row(
-                "SELECT id FROM accounts ORDER BY created_at LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .optional()?
-            .ok_or(anyhow!("No account"))?)
-    })?;
+pub async fn sync(account_id: &str) -> Result<usize> {
+    let account_id = account_id.to_string();
     let cals = get(&format!("{GRAPH}/me/calendars?$top=100")).await?;
     let mut total = 0;
     for (i, c) in cals["value"]
@@ -262,10 +253,25 @@ pub fn events(start: i64, end: i64) -> Result<Vec<Event>> {
 }
 
 fn enqueue(db: &rusqlite::Connection, id: &str, op: &str, payload: Value) -> Result<()> {
+    enqueue_as(db, id, op, payload, None)
+}
+
+fn owner_email(db: &rusqlite::Connection, event_id: &str) -> Option<String> {
+    db.query_row(
+        "SELECT a.email FROM calendar_events e JOIN calendars c ON c.id=e.calendar_id JOIN accounts a ON a.id=c.account_id WHERE e.id=?1",
+        [event_id],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+fn enqueue_as(db: &rusqlite::Connection, id: &str, op: &str, payload: Value, email: Option<String>) -> Result<()> {
     db.execute(
         "INSERT INTO offline_mutation_queue(account_id,entity_type,local_entity_id,operation,payload_json,created_at)
-         VALUES((SELECT id FROM accounts ORDER BY created_at LIMIT 1),'CALENDAR_EVENT',?1,?2,?3,?4)",
-        params![id, op, payload.to_string(), chrono::Utc::now().timestamp()],
+         VALUES(COALESCE((SELECT c.account_id FROM calendar_events e JOIN calendars c ON c.id=e.calendar_id WHERE e.id=?1),
+                         (SELECT id FROM accounts WHERE lower(email)=lower(?5)),
+                         (SELECT id FROM accounts ORDER BY created_at LIMIT 1)),'CALENDAR_EVENT',?1,?2,?3,?4)",
+        params![id, op, payload.to_string(), chrono::Utc::now().timestamp(), email],
     )?;
     Ok(())
 }
@@ -362,9 +368,10 @@ pub fn delete(id: &str) -> Result<()> {
             [id],
             |r| r.get(0),
         )?;
+        let owner = owner_email(&tx, id);
         tx.execute("DELETE FROM calendar_events WHERE id=?1", [id])?;
         match rid {
-            Some(r) => enqueue(&tx, id, "DELETE_EVENT", json!({ "remote_id": r }))?,
+            Some(r) => enqueue_as(&tx, id, "DELETE_EVENT", json!({ "remote_id": r }), owner)?,
             None => {
                 // Never reached the server: cancel the queued create instead.
                 tx.execute(

@@ -61,7 +61,7 @@ fn lookup(id: &str) -> Result<(String, Option<String>)> {
 }
 
 /// Creates a folder at the top level, or inside `parent_id` when given. Returns the new local id.
-pub async fn create(name: &str, parent_id: Option<&str>) -> Result<String> {
+async fn create_inner(name: &str, parent_id: Option<&str>, account_id: &str) -> Result<String> {
     let name = clean_name(name)?;
     let url = match parent_id {
         Some(p) => format!("{GRAPH}/me/mailFolders/{}/childFolders", lookup(p)?.0),
@@ -81,16 +81,16 @@ pub async fn create(name: &str, parent_id: Option<&str>) -> Result<String> {
     storage::with_db(|db| {
         db.execute(
             "INSERT INTO folders(id,account_id,remote_id,parent_remote_id,display_name,unread_count,total_count)
-             VALUES(?1,(SELECT id FROM accounts ORDER BY created_at LIMIT 1),?2,?3,?4,0,0)
+             VALUES(?1,?5,?2,?3,?4,0,0)
              ON CONFLICT(account_id,remote_id) DO NOTHING",
-            params![id, rid, v["parentFolderId"].as_str(), name],
+            params![id, rid, v["parentFolderId"].as_str(), name, account_id],
         )?;
         Ok(())
     })?;
     Ok(id)
 }
 
-pub async fn rename(id: &str, name: &str) -> Result<()> {
+async fn rename_inner(id: &str, name: &str) -> Result<()> {
     let name = clean_name(name)?;
     let (rid, wk) = lookup(id)?;
     if wk.is_some() {
@@ -113,7 +113,7 @@ pub async fn rename(id: &str, name: &str) -> Result<()> {
 }
 
 /// Deletes on the server (Microsoft moves it to Deleted Items) and removes it and its subfolders locally.
-pub async fn delete(id: &str) -> Result<()> {
+async fn delete_inner(id: &str) -> Result<()> {
     let (rid, wk) = lookup(id)?;
     if wk.is_some() {
         return Err(anyhow!("Built-in folders like Inbox can't be deleted."));
@@ -146,6 +146,60 @@ pub async fn delete(id: &str) -> Result<()> {
         }
         Ok(())
     })
+}
+
+/// (local account id, email, provider) that owns a folder.
+fn folder_owner(id: &str) -> Result<(String, String, String)> {
+    let (aid, email): (String, String) = storage::with_db(|db| {
+        Ok(db
+            .query_row(
+                "SELECT a.id, a.email FROM folders f JOIN accounts a ON a.id=f.account_id WHERE f.id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or(anyhow!("That folder no longer exists."))?)
+    })?;
+    let provider = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).map(|a| a.provider).unwrap_or_else(|| "microsoft".into());
+    Ok((aid, email, provider))
+}
+
+fn account_by_email(email: &str) -> Result<(String, String)> {
+    let acc = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(email)).ok_or(anyhow!("Unknown account {email}"))?;
+    let aid = crate::sync::ensure_account_pub(&acc)?;
+    Ok((aid, acc.provider))
+}
+
+/// Creates a folder inside `parent_id`, or at the top level of `account_email` (default: first account).
+pub async fn create(name: &str, parent_id: Option<&str>, account_email: Option<&str>) -> Result<String> {
+    let (aid, email, provider) = match parent_id {
+        Some(p) => folder_owner(p)?,
+        None => {
+            let email = account_email.map(String::from).or_else(auth::active_email).ok_or(anyhow!("Not signed in"))?;
+            let (aid, provider) = account_by_email(&email)?;
+            (aid, email, provider)
+        }
+    };
+    if provider == "google" {
+        return auth::in_account(Some(email), crate::google::create_label(name, parent_id, &aid)).await;
+    }
+    auth::in_account(Some(email), create_inner(name, parent_id, &aid)).await
+}
+
+pub async fn rename(id: &str, name: &str) -> Result<()> {
+    let (_, email, provider) = folder_owner(id)?;
+    if provider == "google" {
+        return auth::in_account(Some(email), crate::google::rename_label(id, name)).await;
+    }
+    auth::in_account(Some(email), rename_inner(id, name)).await
+}
+
+pub async fn delete(id: &str) -> Result<()> {
+    let (_, email, provider) = folder_owner(id)?;
+    if provider == "google" {
+        return auth::in_account(Some(email), crate::google::delete_label(id)).await;
+    }
+    auth::in_account(Some(email), delete_inner(id)).await
 }
 
 #[cfg(test)]

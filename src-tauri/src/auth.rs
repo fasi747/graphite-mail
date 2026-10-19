@@ -16,10 +16,35 @@ const SCOPES: &str =
     "openid profile offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite";
 const KEYRING_SERVICE: &str = "graphite-mail";
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Account {
     pub email: String,
     pub display_name: String,
+    /// "microsoft" or "google"
+    #[serde(default = "default_provider")]
+    pub provider: String,
+}
+
+fn default_provider() -> String {
+    "microsoft".into()
+}
+
+tokio::task_local! {
+    /// The account whose mailbox the current task is working on.
+    static ACTIVE: String;
+}
+
+/// Runs `fut` on behalf of `email`: every access_token() call inside uses that account.
+pub async fn in_account<F: std::future::Future>(email: Option<String>, fut: F) -> F::Output {
+    match email {
+        Some(e) => ACTIVE.scope(e, fut).await,
+        None => fut.await,
+    }
+}
+
+/// Email of the account the current task works for (falls back to the first account).
+pub fn active_email() -> Option<String> {
+    ACTIVE.try_with(|e| e.clone()).ok().or_else(|| accounts().into_iter().next().map(|a| a.email))
 }
 
 #[derive(Deserialize)]
@@ -34,7 +59,66 @@ struct Cached {
     expires: Instant,
 }
 
-static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+static CACHE: Mutex<Option<std::collections::HashMap<String, Cached>>> = Mutex::new(None);
+
+fn cache_put(email: &str, token: &str, expires_in: u64) {
+    CACHE.lock().unwrap().get_or_insert_with(Default::default).insert(
+        email.to_lowercase(),
+        Cached { token: token.to_string(), expires: Instant::now() + Duration::from_secs(expires_in.saturating_sub(120)) },
+    );
+}
+
+fn cache_get(email: &str) -> Option<String> {
+    let g = CACHE.lock().unwrap();
+    let c = g.as_ref()?.get(&email.to_lowercase())?;
+    (Instant::now() < c.expires).then(|| c.token.clone())
+}
+
+fn rt_key(email: &str) -> String {
+    format!("rt:{}", email.to_lowercase())
+}
+
+/// All signed-in accounts, oldest first. Migrates the single-account format of earlier versions.
+pub fn accounts() -> Vec<Account> {
+    if let Some(list) = entry("accounts").ok().and_then(|e| e.get_password().ok()).and_then(|s| serde_json::from_str::<Vec<Account>>(&s).ok()) {
+        return list;
+    }
+    // Earlier versions kept one account under "account" + "refresh_token".
+    let legacy: Option<Account> = entry("account").ok().and_then(|e| e.get_password().ok()).and_then(|s| serde_json::from_str(&s).ok());
+    let rt = entry("refresh_token").ok().and_then(|e| e.get_password().ok());
+    if let (Some(acc), Some(rt)) = (legacy, rt) {
+        if entry(&rt_key(&acc.email)).and_then(|e| Ok(e.set_password(&rt)?)).is_ok() && save_accounts(&[acc.clone()]).is_ok() {
+            let _ = entry("account").map(|e| e.delete_credential());
+            let _ = entry("refresh_token").map(|e| e.delete_credential());
+        }
+        return vec![acc];
+    }
+    vec![]
+}
+
+fn save_accounts(list: &[Account]) -> Result<()> {
+    entry("accounts")?.set_password(&serde_json::to_string(list)?)?;
+    Ok(())
+}
+
+/// Adds or updates an account after a successful sign-in.
+pub fn remember(acc: &Account, refresh_token: &str) -> Result<()> {
+    entry(&rt_key(&acc.email))?.set_password(refresh_token)?;
+    let mut list = accounts();
+    match list.iter_mut().find(|a| a.email.eq_ignore_ascii_case(&acc.email)) {
+        Some(a) => *a = acc.clone(),
+        None => list.push(acc.clone()),
+    }
+    save_accounts(&list)
+}
+
+pub fn refresh_token_for(email: &str) -> Result<String> {
+    entry(&rt_key(email))?.get_password().context("Not signed in")
+}
+
+pub fn store_refresh_token(email: &str, rt: &str) -> Result<()> {
+    Ok(entry(&rt_key(email))?.set_password(rt)?)
+}
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -85,12 +169,8 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
     .await?;
 
     let account = fetch_me(&tok.access_token).await?;
-    entry("refresh_token")?.set_password(
-        tok.refresh_token
-            .as_deref()
-            .ok_or(anyhow!("No refresh token"))?,
-    )?;
-    entry("account")?.set_password(&serde_json::to_string(&account)?)?;
+    remember(&account, tok.refresh_token.as_deref().ok_or(anyhow!("No refresh token"))?)?;
+    cache_put(&account.email, &tok.access_token, tok.expires_in);
     Ok(account)
 }
 
@@ -156,10 +236,6 @@ async fn token_request(form: &[(&str, &str)]) -> Result<TokenResponse> {
         });
     }
     let tok: TokenResponse = resp.json().await?;
-    *CACHE.lock().unwrap() = Some(Cached {
-        token: tok.access_token.clone(),
-        expires: Instant::now() + Duration::from_secs(tok.expires_in.saturating_sub(120)),
-    });
     Ok(tok)
 }
 
@@ -182,48 +258,67 @@ async fn fetch_me(token: &str) -> Result<Account> {
     Ok(Account {
         email: me.mail.unwrap_or(me.user_principal_name.clone()),
         display_name: me.display_name.unwrap_or(me.user_principal_name),
+        provider: "microsoft".into(),
     })
 }
 
-/// Returns a valid access token, refreshing silently via the keyring-stored refresh token.
+/// Returns a valid access token for the active account, refreshing silently with its stored refresh token.
 pub async fn access_token() -> Result<String> {
     #[cfg(test)]
     if let Ok(t) = std::env::var("GM_TEST_TOKEN") {
         return Ok(t);
     }
-    if let Some(c) = CACHE.lock().unwrap().as_ref() {
-        if Instant::now() < c.expires {
-            return Ok(c.token.clone());
-        }
+    let email = active_email().ok_or(anyhow!("Not signed in"))?;
+    if let Some(t) = cache_get(&email) {
+        return Ok(t);
     }
-    let rt = entry("refresh_token")?
-        .get_password()
-        .context("Not signed in")?;
+    let acc = accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email));
+    if acc.as_ref().map(|a| a.provider.as_str()) == Some("google") {
+        return crate::google::access_token(&email).await;
+    }
+    let rt = refresh_token_for(&email)?;
     let tok = token_request(&[
         ("client_id", CLIENT_ID),
         ("grant_type", "refresh_token"),
         ("refresh_token", &rt),
         ("scope", SCOPES),
     ])
-    .await?;
+    .await
+    .map_err(|e| anyhow!("{email}: {e}"))?;
     if let Some(new_rt) = tok.refresh_token {
-        entry("refresh_token")?.set_password(&new_rt)?;
+        store_refresh_token(&email, &new_rt)?;
     }
+    cache_put(&email, &tok.access_token, tok.expires_in);
     Ok(tok.access_token)
 }
 
+/// Cache a token obtained elsewhere (Google sign-in/refresh).
+pub fn cache_token(email: &str, token: &str, expires_in: u64) {
+    cache_put(email, token, expires_in);
+}
+
 pub fn current_account() -> Option<Account> {
-    entry("account")
-        .ok()?
-        .get_password()
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+    accounts().into_iter().next()
+}
+
+/// Signs out one account (or all when `email` is None) and forgets its keyring entries.
+pub fn sign_out_account(email: Option<&str>) -> Result<()> {
+    let list = accounts();
+    let (gone, keep): (Vec<_>, Vec<_>) = list.into_iter().partition(|a| email.map_or(true, |e| a.email.eq_ignore_ascii_case(e)));
+    for a in &gone {
+        let _ = entry(&rt_key(&a.email))?.delete_credential();
+        if let Some(c) = CACHE.lock().unwrap().as_mut() {
+            c.remove(&a.email.to_lowercase());
+        }
+    }
+    if keep.is_empty() {
+        let _ = entry("accounts")?.delete_credential();
+    } else {
+        save_accounts(&keep)?;
+    }
+    Ok(())
 }
 
 pub fn sign_out() -> Result<()> {
-    *CACHE.lock().unwrap() = None;
-    for k in ["refresh_token", "account"] {
-        let _ = entry(k)?.delete_credential();
-    }
-    Ok(())
+    sign_out_account(None)
 }

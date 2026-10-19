@@ -1,6 +1,7 @@
 mod auth;
 mod calendar;
 mod folders;
+mod google;
 mod http;
 mod mail;
 mod notify;
@@ -32,7 +33,29 @@ fn current_account() -> Option<Account> {
 
 #[tauri::command]
 fn sign_out() -> CmdResult<()> {
+    for a in auth::accounts() {
+        let _ = sync::forget_account_data(&a.email);
+    }
     auth::sign_out().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_accounts() -> Vec<Account> {
+    auth::accounts()
+}
+
+/// Removes one account: its sign-in and its downloaded mail and calendar.
+#[tauri::command]
+fn remove_account(email: String) -> CmdResult<()> {
+    sync::forget_account_data(&email).map_err(|e| e.to_string())?;
+    auth::sign_out_account(Some(&email)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn add_google_account(app: tauri::AppHandle) -> CmdResult<Account> {
+    google::sign_in(|url| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string())))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Confirms the stored session still works by silently refreshing a token.
@@ -259,8 +282,8 @@ fn log_js(message: String) {
 }
 
 #[tauri::command]
-async fn create_folder(name: String, parent_id: Option<String>) -> CmdResult<String> {
-    folders::create(&name, parent_id.as_deref())
+async fn create_folder(name: String, parent_id: Option<String>, account: Option<String>) -> CmdResult<String> {
+    folders::create(&name, parent_id.as_deref(), account.as_deref())
         .await
         .map_err(|e| e.to_string())
 }
@@ -300,6 +323,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            list_accounts,
+            remove_account,
+            add_google_account,
             get_notifications,
             set_notifications,
             create_folder,
