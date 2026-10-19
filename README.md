@@ -7,7 +7,7 @@ Built with Tauri (Rust) + React. Uses Microsoft Graph — no IMAP/POP3.
 
 - Full offline reading and search of your mailbox
 - Read, flag, move, delete, reply and send while offline — changes sync when you reconnect
-- You choose where your mail data is stored
+- You choose where your mail data is stored, and can move it safely later (crash-proof, verified copy)
 - macOS-style interface with light and dark mode
 - Sign-in tokens kept in your system keyring
 
@@ -15,13 +15,34 @@ Built with Tauri (Rust) + React. Uses Microsoft Graph — no IMAP/POP3.
 ![Dark](docs/screenshot-dark.png)
 ![Calendar](docs/screenshot-calendar.png)
 
-## Install (Ubuntu/Debian)
+## Install
+
+**Ubuntu / Debian** — download the `.deb` from the releases, then:
 
 ```
 sudo apt install ./graphite-mail_<version>_amd64.deb
 graphite-mail
 ```
 
+**Any Linux** — download the `.AppImage`, then:
+
+```
+chmod +x graphite-mail_<version>_amd64.AppImage
+./graphite-mail_<version>_amd64.AppImage
+```
+
+New to Graphite Mail? Read the **[User Guide](docs/USER-GUIDE.md)**.
+
+## Build from source
+
+Needs Node 20+, Rust, and on Ubuntu: `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev libsecret-1-dev patchelf`.
+
+```
+npm ci
+npm run tauri build        # .deb and .AppImage in src-tauri/target/release/bundle/
+cd src-tauri && cargo test # automated tests
+```
+
 ## Status
 
-Mail and calendar are working. See [PLAN.md](PLAN.md).
+Mail, calendar, offline changes and data-folder moves are working. See [PLAN.md](PLAN.md).

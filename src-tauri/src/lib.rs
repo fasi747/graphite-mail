@@ -203,8 +203,11 @@ fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
     match url.scheme() {
         "about" | "tauri" | "ipc" | "asset" => true,
         "http" | "https" => {
-            if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "tauri.localhost" | "ipc.localhost" | "asset.localhost")) {
-                return true; // the app itself (dev server / bundled files)
+            // The app itself: the dev server (development builds only) or bundled files (Windows-style host names).
+            let own = matches!(url.host_str(), Some("tauri.localhost" | "ipc.localhost" | "asset.localhost"))
+                || (cfg!(dev) && matches!(url.host_str(), Some("localhost" | "127.0.0.1")));
+            if own {
+                return true;
             }
             let (app, url) = (app.clone(), url.to_string());
             // Off the UI thread, so a slow browser start can never freeze the window.

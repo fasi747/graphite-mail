@@ -1,0 +1,110 @@
+# Graphite Mail — User Guide
+
+Graphite Mail is a mail and calendar app for Microsoft 365 (work or school accounts) on Linux.
+Your mail is saved on your computer, so you can read, search and write even without internet.
+When you are back online, everything syncs by itself.
+
+## Install
+
+**Ubuntu / Debian (.deb)**
+
+```
+sudo apt install ./graphite-mail_<version>_amd64.deb
+```
+
+Then open **Graphite Mail** from your applications menu, or type `graphite-mail` in a terminal.
+
+**Any Linux (AppImage)**
+
+```
+chmod +x graphite-mail_<version>_amd64.AppImage
+./graphite-mail_<version>_amd64.AppImage
+```
+
+**To remove it:** `sudo apt remove graphite-mail`. Your mail folder is not deleted (see "Where your data lives").
+
+## First start
+
+1. **Choose a data folder.** This is where your mail and calendar are stored. The suggested folder is fine; you can move it later in Settings.
+2. **Sign in with Microsoft.** Your web browser opens. Sign in, then return to Graphite Mail.
+   Your sign-in is kept in your system keyring (GNOME Keyring or KDE Wallet), never in a plain file.
+3. The first sync downloads your mail. Large mailboxes take a while; you can already read what has arrived.
+
+## Everyday use
+
+| To do this | Do this |
+|---|---|
+| Read a message | Click it in the list. Up/Down arrows move between messages. |
+| Search | Type in the Search box. It searches subject, sender and the full text, offline too. |
+| Write a new message | Click the pencil, or press **Ctrl+N** |
+| Reply / Reply all / Forward | Buttons above the message, or **Ctrl+R** / **Ctrl+Shift+R** / **Ctrl+Shift+F** |
+| Mark read or unread | The circle button, or **Ctrl+Shift+U** |
+| Flag | The flag button |
+| Move to a folder | The folder button, then pick the folder |
+| Delete | The bin button or **Delete**. In *Deleted Items* it asks first, then deletes for good. |
+| Get new mail now | The circular-arrow button. It also happens automatically every minute. |
+| Light or dark | The half-moon button at the top right |
+
+**Links** in a message open in your normal web browser. **Pictures from the internet** are hidden at first
+to protect your privacy (senders can see when you open a message otherwise); press **Load** to show them.
+Pictures that are part of the message itself show straight away.
+
+## Working offline
+
+Everything you do offline (read, flag, move, delete, reply, write) is saved and sent when you are back online.
+At the bottom of the sidebar you see how many changes are **waiting to sync**. Click that line to see them.
+
+- **Waiting** — will be sent automatically at the next sync.
+- **Not accepted** — Microsoft refused the change (for example, the message was already deleted by someone else, or you
+  no longer have permission). The reason is shown. **Try again now** sends it again; **Discard not accepted** gives up on it.
+
+Nothing is thrown away without you seeing it.
+
+## Calendar
+
+Click **Calendar** at the top of the sidebar. Switch between **Week** and **Month**, use ‹ › to move, **Today** to jump back.
+
+- Click an event to see details, **Join Teams meeting**, and to reply **Accept / Maybe / Decline**.
+- Double-click an empty time (or press the pencil) to create an event. Add invitees by email address, tick **Teams meeting** if you want a link.
+- The tick boxes under **Calendars** show or hide a calendar.
+
+## Settings and your data folder
+
+Click the **gear** in the bottom-left corner.
+
+**Move to another folder…** moves your whole mail and calendar to a new place (for example a bigger disk).
+It is designed so you cannot lose mail:
+
+1. The new folder must be empty and have enough space.
+2. Everything is copied and each file is checked after copying. Your current folder stays untouched.
+3. Only when the copy has passed all checks does Graphite Mail switch over, and only then is the old folder cleaned up.
+4. If the computer switches off in the middle, Graphite Mail puts things right the next time it starts.
+
+Syncing pauses while the move runs. Keep the app open until it says **Done**.
+
+### Where your data lives
+
+- Your mail and calendar: the data folder you chose (inside it: `db/`, `blobs/`).
+- A small pointer file remembering where that is: `~/.config/graphite-mail/bootstrap.json`.
+- Your sign-in: the system keyring (entry named *graphite-mail*).
+
+To keep a backup, copy the data folder while Graphite Mail is closed.
+
+## Troubleshooting
+
+**"Your Microsoft sign-in has expired."** Click the sign-out button (bottom-left), then sign in again.
+
+**Sign-in asks me to unlock a keyring.** Graphite Mail stores your sign-in in the system keyring. Enter your login password when asked.
+If you have no keyring installed: `sudo apt install gnome-keyring`.
+
+**A link does nothing.** Graphite Mail asks your system to open it, so you need a default web browser set
+(Settings → Default Applications). If it still fails you will see a message.
+
+**The calendar failed to sync.** The status line at the bottom-left says why. A work or school account may need an administrator to allow calendar access.
+
+**Something else is wrong.** Start the app from a terminal with `graphite-mail` and look at the lines beginning with `[graphite]` — send them to the developer.
+
+## Privacy
+
+Graphite Mail talks only to Microsoft (sign-in and Microsoft Graph). There is no tracking and no other server.
+Emails cannot run scripts, and remote pictures are blocked until you allow them.
