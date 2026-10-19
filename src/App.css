@@ -67,6 +67,9 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .traffic .min { background: #febc2e; }
 .traffic .max { background: #28c840; }
 .dragbar { height: 44px; display: flex; align-items: center; padding: 0 14px; }
+.onboard .dragbar { justify-content: flex-end; padding-right: 20px; }
+.winbtns { position: fixed; top: 25px; right: 24px; z-index: 50; }
+.shell .reader .toolbar, .shell .calendar .toolbar { padding-right: 96px; }
 
 /* Onboarding screens */
 .onboard { height: 100%; display: flex; flex-direction: column; }

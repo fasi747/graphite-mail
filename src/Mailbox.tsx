@@ -271,8 +271,9 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
 
   return (
     <div className="shell">
+      <div className="winbtns"><TrafficLights /></div>
       <nav className="sidebar">
-        <DragBar><TrafficLights /></DragBar>
+        <DragBar />
         <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
           <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
         </div>

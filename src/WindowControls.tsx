@@ -8,13 +8,13 @@ const win = () => {
   }
 };
 
-/** macOS-style traffic lights for the frameless window. */
+/** Window buttons for the frameless window, top-right like Ubuntu: minimise, maximise, close. */
 export function TrafficLights() {
   return (
     <div className="traffic">
-      <span className="close" onClick={() => win()?.close()}>✕</span>
-      <span className="min" onClick={() => win()?.minimize()}>−</span>
-      <span className="max" onClick={() => win()?.toggleMaximize()}>+</span>
+      <span className="min" title="Minimise" onClick={() => win()?.minimize()}>−</span>
+      <span className="max" title="Maximise" onClick={() => win()?.toggleMaximize()}>+</span>
+      <span className="close" title="Close" onClick={() => win()?.close()}>✕</span>
     </div>
   );
 }
