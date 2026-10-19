@@ -1,3 +1,4 @@
+mod attachments;
 mod auth;
 mod calendar;
 mod folders;
@@ -199,6 +200,23 @@ async fn move_data_folder(app: tauri::AppHandle, target: String) -> CmdResult<St
 }
 
 #[tauri::command]
+async fn list_attachments(message_id: String) -> CmdResult<Vec<attachments::AttachmentRow>> {
+    attachments::list(&message_id).await.map_err(|e| e.to_string())
+}
+
+/// Downloads (if needed) and opens an attachment with the system's default program.
+#[tauri::command]
+async fn open_attachment(app: tauri::AppHandle, id: String) -> CmdResult<()> {
+    let path = attachments::prepare_open(&id).await.map_err(|e| e.to_string())?;
+    app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_attachment(id: String, dest: String) -> CmdResult<()> {
+    attachments::save(&id, &dest).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_rules() -> CmdResult<Vec<rules::RuleView>> {
     rules::list().map_err(|e| e.to_string())
 }
@@ -377,6 +395,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_ready,
             list_accounts,
+            list_attachments,
+            open_attachment,
+            save_attachment,
             list_rules,
             save_rule,
             delete_rule,
@@ -421,6 +442,7 @@ pub fn run() {
             log_js
         ])
         .setup(|app| {
+            attachments::clear_temp();
             let handle = app.handle().clone();
             let cfg = app.config().app.windows[0].clone();
             // The main window loads in the background, hidden, while the splash animation plays.

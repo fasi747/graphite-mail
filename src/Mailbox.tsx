@@ -10,7 +10,7 @@ import CalendarView, { Cal } from "./CalendarView";
 import Settings from "./Settings";
 import Rules from "./Rules";
 import { Ribbon, RibbonTab, Group, Big, Small, Stack, BigMenu, NamePrompt } from "./Ribbon";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 type Account = { email: string; display_name: string; provider?: string; rules?: boolean };
 const ALL = "all-inboxes";
@@ -20,6 +20,7 @@ type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
   snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean; account_email: string;
 };
+type Att = { id: string; name: string; mime: string; size: number; downloaded: boolean };
 type QueueItem = { seq: number; what: string; failed: boolean; tries: number; error: string | null };
 type Detail = Msg & { to_json: string | null; cc_json: string | null; body_html: string | null };
 
@@ -32,6 +33,8 @@ function syncStatus(r: SyncReport) {
   if (r.calendar_error) return `Mail is up to date, but the calendar failed: ${r.calendar_error}`;
   return r.messages_changed ? `Synced · ${r.messages_changed} new` : "Up to date";
 }
+
+const fmtBytes = (b: number) => (b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
 function fmtDate(ts: number) {
   const d = new Date(ts * 1000);
@@ -133,6 +136,8 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [atts, setAtts] = useState<Att[]>([]);
+  const [attBusy, setAttBusy] = useState("");
   const [rulesOpen, setRulesOpen] = useState(false);
   const [tab, setTab] = useState<RibbonTab>("home");
   const [meetingReq, setMeetingReq] = useState({ teams: true, n: 0 });
@@ -294,6 +299,8 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     setMoveOpen(false);
     const d = await invoke<Detail>("get_message", { id: m.id });
     setSelected(d);
+    setAtts([]);
+    if (m.has_attachments) invoke<Att[]>("list_attachments", { messageId: m.id }).then((a) => setSelected((s) => { if (s && s.id === m.id) setAtts(a); return s; })).catch(() => {});
     if (!m.is_read) {
       invoke("set_read", { id: m.id, read: true }).then(() => { patch(m.id, { is_read: true }); loadFolders(); }).catch(() => {});
     }
@@ -528,6 +535,20 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
                 <div className="when">{new Date(selected.received_at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
               </div>
             </header>
+            {atts.length > 0 && (
+              <div className="attrow">
+                {atts.map((a) => (
+                  <span key={a.id} className="attchip" title={`${a.name} · ${fmtBytes(a.size)}${a.downloaded ? " · saved for offline" : ""}`}>
+                    <button className="attopen" disabled={attBusy === a.id}
+                      onClick={async () => { setAttBusy(a.id); try { await invoke("open_attachment", { id: a.id }); setAtts((l) => l.map((x) => (x.id === a.id ? { ...x, downloaded: true } : x))); } catch (e) { flash(String(e)); } finally { setAttBusy(""); } }}>
+                      <Icon name="paperclip" size={13} /> <span className="attname">{a.name}</span> <span className="muted">{attBusy === a.id ? "downloading…" : fmtBytes(a.size)}</span>
+                    </button>
+                    <button className="attsave" title="Save a copy…" disabled={attBusy === a.id}
+                      onClick={async () => { const dest = await saveDialog({ defaultPath: a.name, title: "Save attachment" }); if (!dest) return; setAttBusy(a.id); try { await invoke("save_attachment", { id: a.id, dest }); flash("Saved"); } catch (e) { flash(String(e)); } finally { setAttBusy(""); } }}>Save</button>
+                  </span>
+                ))}
+              </div>
+            )}
             {rendered && rendered.blocked > 0 && !allowRemote && (
               <div className="notice">
                 <span>Remote content was blocked to protect your privacy.</span>

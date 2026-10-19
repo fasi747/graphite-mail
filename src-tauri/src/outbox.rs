@@ -156,6 +156,9 @@ pub struct Draft {
     /// Account to send from (email). Replies always go from the account that received the message.
     #[serde(default)]
     pub from: Option<String>,
+    /// Paths of files to attach.
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 /// Queue an outgoing message; it is sent immediately when online, otherwise on reconnect.
@@ -171,6 +174,8 @@ pub fn send(d: Draft) -> Result<()> {
         .or_else(|| d.from.clone()),
         None => d.from.clone(),
     };
+    // Files are copied into the blob store now, so the message can go out later, even offline.
+    let files = crate::attachments::prepare_outgoing(&d.attachments)?;
     let entity = d
         .reply_to
         .clone()
@@ -180,7 +185,7 @@ pub fn send(d: Draft) -> Result<()> {
             db,
             &entity,
             "SEND",
-            json!({ "mode": d.mode, "to": d.to, "cc": d.cc, "subject": d.subject, "html": d.html }),
+            json!({ "mode": d.mode, "to": d.to, "cc": d.cc, "subject": d.subject, "html": d.html, "attachments": files }),
             from.or_else(auth::active_email),
         )
     })
@@ -340,6 +345,83 @@ async fn call(method: reqwest::Method, url: &str, body: Option<Value>) -> Result
     Ok((status, v))
 }
 
+/// Outlook send with attachments: make a draft (a reply/forward draft when it answers a message), add the files, send.
+async fn send_with_files(base: &str, p: &Value, rid: Option<&str>) -> Result<(u16, Value)> {
+    use reqwest::Method;
+    let fail = |s: u16, v: Value| -> Result<(u16, Value)> { Ok((s, v)) };
+    let mode = p["mode"].as_str().unwrap_or("new");
+    let fields = json!({
+        "subject": p["subject"], "body": { "contentType": "HTML", "content": p["html"] },
+        "toRecipients": recipients(&p["to"]), "ccRecipients": recipients(&p["cc"]),
+    });
+    let (s, v) = match (mode, rid) {
+        ("new", _) | (_, None) => call(Method::POST, &format!("{base}/me/messages"), Some(fields.clone())).await?,
+        (m, Some(r)) => {
+            let action = match m { "replyAll" => "createReplyAll", "forward" => "createForward", _ => "createReply" };
+            let (s, v) = call(Method::POST, &format!("{base}/me/messages/{r}/{action}"), Some(json!({}))).await?;
+            if !(200..300).contains(&s) {
+                return fail(s, v);
+            }
+            let id = v["id"].as_str().unwrap_or_default().to_string();
+            let (s2, v2) = call(Method::PATCH, &format!("{base}/me/messages/{id}"), Some(fields.clone())).await?;
+            if !(200..300).contains(&s2) {
+                let _ = call(Method::DELETE, &format!("{base}/me/messages/{id}"), None).await;
+                return fail(s2, v2);
+            }
+            (s, v)
+        }
+    };
+    if !(200..300).contains(&s) {
+        return fail(s, v);
+    }
+    let draft = v["id"].as_str().ok_or(anyhow!("No draft id"))?.to_string();
+    for a in p["attachments"].as_array().cloned().unwrap_or_default() {
+        let bytes = crate::sync::read_blob(a["blob"].as_str().unwrap_or_default(), "bin")?;
+        let (name, mime) = (a["name"].as_str().unwrap_or("attachment"), a["mime"].as_str().unwrap_or("application/octet-stream"));
+        let (s, v) = if bytes.len() < 3_000_000 {
+            use base64::Engine;
+            call(Method::POST, &format!("{base}/me/messages/{draft}/attachments"), Some(json!({
+                "@odata.type": "#microsoft.graph.fileAttachment", "name": name, "contentType": mime,
+                "contentBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+            }))).await?
+        } else {
+            // Big files go up in pieces through an upload session.
+            let (s, v) = call(Method::POST, &format!("{base}/me/messages/{draft}/attachments/createUploadSession"),
+                Some(json!({ "AttachmentItem": { "attachmentType": "file", "name": name, "size": bytes.len() } }))).await?;
+            if !(200..300).contains(&s) {
+                (s, v)
+            } else {
+                let url = v["uploadUrl"].as_str().ok_or(anyhow!("No upload address"))?.to_string();
+                let total = bytes.len();
+                let mut start = 0;
+                let mut last = (200, Value::Null);
+                while start < total {
+                    let end = (start + 2_949_120).min(total);
+                    let resp = crate::http::client().put(&url)
+                        .header("Content-Range", format!("bytes {}-{}/{}", start, end - 1, total))
+                        .body(bytes[start..end].to_vec()).send().await?;
+                    let st = resp.status().as_u16();
+                    last = (st, resp.json().await.unwrap_or(Value::Null));
+                    if !(200..300).contains(&st) {
+                        break;
+                    }
+                    start = end;
+                }
+                last
+            }
+        };
+        if !(200..300).contains(&s) {
+            let _ = call(Method::DELETE, &format!("{base}/me/messages/{draft}"), None).await;
+            return fail(s, v);
+        }
+    }
+    let (s, v) = call(Method::POST, &format!("{base}/me/messages/{draft}/send"), None).await?;
+    if !(200..300).contains(&s) {
+        let _ = call(Method::DELETE, &format!("{base}/me/messages/{draft}"), None).await;
+    }
+    Ok((s, v))
+}
+
 /// Replays the queue in order. Stops at the first network-level failure so ordering is preserved.
 pub async fn replay() -> Result<usize> {
     let _one_at_a_time = REPLAY_LOCK.lock().await;
@@ -415,6 +497,9 @@ pub async fn replay() -> Result<usize> {
             }
             ("DELETE_HARD", Some(r)) => {
                 call(Method::DELETE, &format!("{base}/me/messages/{r}"), None).await
+            }
+            ("SEND", _) if p["attachments"].as_array().is_some_and(|a| !a.is_empty()) => {
+                send_with_files(&base, p, rid.as_deref()).await
             }
             ("SEND", _) => {
                 let msg = json!({
@@ -760,14 +845,14 @@ mod tests {
         // ...but moving within its account works.
         move_to("mb", "fb2").unwrap();
         // A reply is queued for the account that received the message, whatever "from" says.
-        send(Draft { mode: "reply".into(), reply_to: Some("mb".into()), to: vec!["x@z.com".into()], cc: vec![], subject: "Re".into(), html: "hi".into(), from: Some("work@x.com".into()) }).unwrap();
+        send(Draft { mode: "reply".into(), reply_to: Some("mb".into()), to: vec!["x@z.com".into()], cc: vec![], subject: "Re".into(), html: "hi".into(), from: Some("work@x.com".into()), attachments: vec![] }).unwrap();
         let acct: String = storage::with_db(|db| {
             Ok(db.query_row("SELECT a.email FROM offline_mutation_queue q JOIN accounts a ON a.id=q.account_id WHERE q.operation='SEND'", [], |r| r.get(0))?)
         })
         .unwrap();
         assert_eq!(acct, "home@y.com");
         // A new message goes from the chosen account.
-        send(Draft { mode: "new".into(), reply_to: None, to: vec!["x@z.com".into()], cc: vec![], subject: "Hi".into(), html: "hi".into(), from: Some("work@x.com".into()) }).unwrap();
+        send(Draft { mode: "new".into(), reply_to: None, to: vec!["x@z.com".into()], cc: vec![], subject: "Hi".into(), html: "hi".into(), from: Some("work@x.com".into()), attachments: vec![] }).unwrap();
         let n: i64 = storage::with_db(|db| {
             Ok(db.query_row("SELECT COUNT(*) FROM offline_mutation_queue q JOIN accounts a ON a.id=q.account_id WHERE q.operation='SEND' AND a.email='work@x.com'", [], |r| r.get(0))?)
         })

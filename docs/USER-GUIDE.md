@@ -50,6 +50,13 @@ You can use more than one account at the same time.
 - Forwarding does not include the original attachments (Gmail doesn't do that for apps).
 - Google Calendar works like the Microsoft calendar; **Google Meet video call** adds a Meet link to a new event.
 
+## Attachments
+
+- **Reading:** a message with files shows them as small chips under the header (name and size). Click a chip to **open** it with your normal program, or **Save** to keep a copy wherever you like. The file is downloaded the first time and then kept, so it also opens offline.
+- **Safety:** programs and scripts (for example `.exe`, `.sh`, `.AppImage`, `.desktop`) are never opened straight from an email. Use **Save** and open them yourself only if you trust the sender.
+- **Writing:** in the editor click **📎 Attach**, choose one or more files, and remove any with ✕. Up to **15 MB** in total. Attachments are kept with your message, so they are sent when you reconnect.
+- **Forwarding** includes the original message's attachments (Outlook and Gmail).
+
 ## Rules
 
 **Home → Rules** lets you make mail sort itself, for example "everything from my bank goes into the Bank folder".

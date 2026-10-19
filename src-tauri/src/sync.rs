@@ -349,18 +349,18 @@ pub fn read_blob(hash: &str, ext: &str) -> Result<Vec<u8>> {
 
 /// Downloads full HTML bodies for newest messages first so mail is readable offline.
 pub async fn hydrate_bodies(account_id: &str, limit: usize) -> Result<usize> {
-    let pending: Vec<(String, String, String, String, String)> = storage::with_db(|db| {
+    let pending: Vec<(String, String, String, String, String, bool)> = storage::with_db(|db| {
         let mut st = db.prepare(
-            "SELECT id, remote_id, COALESCE(subject,''), COALESCE(sender_name,''), COALESCE(sender_address,'')
+            "SELECT id, remote_id, COALESCE(subject,''), COALESCE(sender_name,''), COALESCE(sender_address,''), has_attachments
              FROM messages WHERE account_id=?2 AND body_cached=0 AND remote_id IS NOT NULL ORDER BY received_at DESC LIMIT ?1",
         )?;
         let rows = st.query_map(params![limit as i64, account_id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
     let mut n = 0;
-    for (id, rid, subject, sname, saddr) in pending {
+    for (id, rid, subject, sname, saddr, has_att) in pending {
         let v = match get(&format!("{GRAPH}/me/messages/{rid}?$select=body")).await {
             Ok(v) => v,
             Err(_) => continue,
@@ -371,6 +371,9 @@ pub async fn hydrate_bodies(account_id: &str, limit: usize) -> Result<usize> {
         // Inline pictures arrive as attachments; fetch them now so they show offline. If this fails,
         // leave inline_done=0 so the next pass tries again.
         let inline_done = !has_cid(html) || fetch_inline_images(&id, &rid).await.is_ok();
+        if has_att {
+            let _ = crate::attachments::store_file_attachments(&id, &rid).await; // names/sizes; the files come when opened
+        }
         storage::with_db(|db| {
             db.execute(
                 "UPDATE messages SET body_blob_hash=?1, body_cached=1, inline_done=?3 WHERE id=?2",

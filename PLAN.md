@@ -33,3 +33,8 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 ## v1.4 — new logo and splash
 - [x] New logo (vector sources in `assets/`), app icon regenerated, README logo
 - [x] Animated splash screen; the main window stays hidden until the animation (3.4 s) has finished and the UI is ready
+
+## v1.5 — attachments
+- [x] Attachment list in the reader, open / save, downloaded on demand and kept offline (Outlook + Gmail)
+- [x] Safe-open: scripts and programs can only be saved
+- [x] Attach files when writing (Outlook draft + upload session for big files; Gmail MIME), forwards keep the original's files

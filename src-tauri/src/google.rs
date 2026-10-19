@@ -351,6 +351,8 @@ pub struct Parsed {
     pub inline: Vec<Inline>,
     /// (name, mime, size) of real attachments
     pub files: Vec<(String, String, usize)>,
+    /// The bytes of `files`, only when asked for (parse_raw_full with keep_files).
+    pub file_bytes: Vec<Vec<u8>>,
 }
 
 fn people(a: Option<&mail_parser::Address>) -> String {
@@ -362,6 +364,11 @@ fn people(a: Option<&mail_parser::Address>) -> String {
 
 /// Turns raw RFC 5322 mail into what the app stores. Handles encoded headers, charsets, multipart, inline pictures.
 pub fn parse_raw(raw: &[u8]) -> Result<Parsed> {
+    parse_raw_full(raw, false)
+}
+
+pub fn parse_raw_full(raw: &[u8], keep_files: bool) -> Result<Parsed> {
+    let mut file_bytes = Vec::new();
     let msg = MessageParser::default().parse(raw).ok_or_else(|| anyhow!("Could not read a message from Gmail"))?;
     let from = msg.from().and_then(|a| a.first());
     let mut inline = Vec::new();
@@ -376,7 +383,12 @@ pub fn parse_raw(raw: &[u8]) -> Result<Parsed> {
                 name,
                 bytes: part.contents().to_vec(),
             }),
-            _ => files.push((name, mime, part.contents().len())),
+            _ => {
+                files.push((name, mime, part.contents().len()));
+                if keep_files {
+                    file_bytes.push(part.contents().to_vec());
+                }
+            }
         }
     }
     Ok(Parsed {
@@ -389,8 +401,20 @@ pub fn parse_raw(raw: &[u8]) -> Result<Parsed> {
         html: msg.body_html(0).map(|c| c.into_owned()).unwrap_or_default(),
         inline,
         files,
+        file_bytes,
     })
 }
+
+/// Downloads one attachment of a Gmail message (found by name and size in the full message).
+pub async fn download_attachment(message_remote_id: &str, name: &str, size: i64) -> Result<Vec<u8>> {
+    let v = get_ok(&url(&gmail(), &["messages", message_remote_id], &[("format", "raw")])).await?;
+    let p = parse_raw_full(&unb64(v["raw"].as_str().unwrap_or_default())?, true)?;
+    let idx = p.files.iter().position(|(n, _, s)| n == name && *s as i64 == size).or_else(|| p.files.iter().position(|(n, _, _)| n == name));
+    idx.and_then(|i| p.file_bytes.get(i).cloned()).ok_or_else(|| anyhow!("That attachment is no longer in the message."))
+}
+
+/// An attachment waiting to be sent: (file name, mime type, bytes).
+pub type OutFile = (String, String, Vec<u8>);
 
 /// What Gmail says about a message besides its text.
 struct Meta {
@@ -690,7 +714,7 @@ pub async fn sync_account(account_id: &str) -> Result<sync::SyncReport> {
 // ---------------------------------------------------------------- sending
 
 /// Builds the RFC 5322 message Gmail sends. `reply` = (Message-ID of the original, its References).
-pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str, html: &str, reply: Option<(&str, &str)>) -> Result<Vec<u8>> {
+pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str, html: &str, reply: Option<(&str, &str)>, files: &[OutFile]) -> Result<Vec<u8>> {
     use mail_builder::MessageBuilder;
     use mail_builder::headers::address::Address;
     fn addrs(l: &[String]) -> Address<'_> {
@@ -699,6 +723,9 @@ pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str
     let mut b = MessageBuilder::new().from(from).to(addrs(to)).subject(subject).html_body(html).text_body(sync::strip_html(html));
     if !cc.is_empty() {
         b = b.cc(addrs(cc));
+    }
+    for (name, mime, bytes) in files {
+        b = b.attachment(mime.clone(), name.clone(), bytes.clone());
     }
     if let Some((id, refs)) = reply {
         let id = id.trim_matches(|c| c == '<' || c == '>');
@@ -730,7 +757,24 @@ async fn send_message(entity: &str, rid: Option<&str>, p: &Value) -> Result<(u16
         _ => None,
     };
     let reply = original.as_ref().and_then(|(mid, _)| mid.as_deref()).map(|m| (m, ""));
-    let raw = build_raw((&name, &email), &list("to"), &list("cc"), p["subject"].as_str().unwrap_or_default(), p["html"].as_str().unwrap_or_default(), reply)?;
+    // Attachments chosen in the editor are kept in the blob store until the message goes out.
+    let mut files: Vec<OutFile> = vec![];
+    for a in p["attachments"].as_array().cloned().unwrap_or_default() {
+        let bytes = sync::read_blob(a["blob"].as_str().unwrap_or_default(), "bin")?;
+        files.push((a["name"].as_str().unwrap_or("attachment").to_string(), a["mime"].as_str().unwrap_or("application/octet-stream").to_string(), bytes));
+    }
+    // A forward carries the original's attachments (Gmail doesn't do that by itself).
+    if let (Some("forward"), Some(r)) = (p["mode"].as_str(), rid) {
+        let (s, v) = call(Method::GET, &url(&gmail(), &["messages", r], &[("format", "raw")]), None).await?;
+        if !(200..300).contains(&s) {
+            return Ok((s, v));
+        }
+        let orig = parse_raw_full(&unb64(v["raw"].as_str().unwrap_or_default())?, true)?;
+        for ((n, m, _), b) in orig.files.into_iter().zip(orig.file_bytes) {
+            files.push((n, m, b));
+        }
+    }
+    let raw = build_raw((&name, &email), &list("to"), &list("cc"), p["subject"].as_str().unwrap_or_default(), p["html"].as_str().unwrap_or_default(), reply, &files)?;
     let mut body = json!({ "raw": auth::b64(&raw) });
     if let Some((_, Some(thread))) = &original {
         body["threadId"] = json!(thread);
@@ -1223,7 +1267,11 @@ pub(crate) mod tests {
         (base, log)
     }
 
-    fn raw_mail(subject: &str, html: &str, inline: Option<(&str, &[u8])>, attach: bool) -> String {
+    pub(crate) fn unb64_for_test(s: &str) -> Vec<u8> {
+        unb64(s).unwrap()
+    }
+
+    pub(crate) fn raw_mail(subject: &str, html: &str, inline: Option<(&str, &[u8])>, attach: bool) -> String {
         let mut b = mail_builder::MessageBuilder::new()
             .from(("Mum", "mum@example.com"))
             .to(("Me", "g@x.com"))
@@ -1273,7 +1321,7 @@ pub(crate) mod tests {
 
     #[test]
     fn builds_replies_that_thread() {
-        let raw = build_raw(("Me", "g@x.com"), &["a@b.c".into()], &["c@d.e".into()], "Re: Plans", "<p>Yes</p>", Some(("<orig-1@example.com>", ""))).unwrap();
+        let raw = build_raw(("Me", "g@x.com"), &["a@b.c".into()], &["c@d.e".into()], "Re: Plans", "<p>Yes</p>", Some(("<orig-1@example.com>", "")), &[]).unwrap();
         let text = String::from_utf8_lossy(&raw).to_string();
         assert!(text.contains("In-Reply-To: <orig-1@example.com>"), "{text}");
         assert!(text.contains("References: <orig-1@example.com>"));
@@ -1451,8 +1499,8 @@ pub(crate) mod tests {
 
         // replying joins the conversation and comes from the receiving account
         log.lock().unwrap().clear();
-        crate::outbox::send(crate::outbox::Draft { mode: "reply".into(), reply_to: Some(m1l.clone()), to: vec!["mum@example.com".into()], cc: vec![], subject: "Re: Budget review".into(), html: "<p>Thanks</p>".into(), from: None }).unwrap();
-        crate::outbox::send(crate::outbox::Draft { mode: "new".into(), reply_to: None, to: vec!["z@z.com".into()], cc: vec![], subject: "Hello".into(), html: "<p>New</p>".into(), from: Some("g@x.com".into()) }).unwrap();
+        crate::outbox::send(crate::outbox::Draft { mode: "reply".into(), reply_to: Some(m1l.clone()), to: vec!["mum@example.com".into()], cc: vec![], subject: "Re: Budget review".into(), html: "<p>Thanks</p>".into(), from: None, attachments: vec![] }).unwrap();
+        crate::outbox::send(crate::outbox::Draft { mode: "new".into(), reply_to: None, to: vec!["z@z.com".into()], cc: vec![], subject: "Hello".into(), html: "<p>New</p>".into(), from: Some("g@x.com".into()), attachments: vec![] }).unwrap();
         crate::outbox::replay().await.unwrap();
         let sends: Vec<Value> = log.lock().unwrap().iter().filter(|(_, p, _)| p.ends_with("/messages/send")).map(|(_, _, b)| b.clone()).collect();
         assert_eq!(sends.len(), 2);

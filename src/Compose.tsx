@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import DOMPurify from "dompurify";
+import { open as pickFiles } from "@tauri-apps/plugin-dialog";
 
 export type ComposeInit = {
   mode: "new" | "reply" | "replyAll" | "forward";
@@ -25,6 +26,7 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   const [subject, setSubject] = useState(init.subject ?? "");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [files, setFiles] = useState<string[]>([]);
   const body = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
     try {
       const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${body.current?.innerHTML ?? ""}</div>`;
       const sent = await invoke<boolean>("send_mail", {
-        draft: { mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to: toList, cc: ccList, subject, html },
+        draft: { mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to: toList, cc: ccList, subject, html, attachments: files },
       });
       onSent(!sent);
     } catch (e) {
@@ -55,6 +57,12 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   }
 
   const cmd = (c: string) => document.execCommand(c);
+  const nameOf = (p: string) => p.split(/[\\/]/).pop() ?? p;
+  async function attach() {
+    const picked = await pickFiles({ multiple: true, title: "Attach files" });
+    const list = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    setFiles((f) => [...f, ...list.filter((p) => !f.includes(p))]);
+  }
 
   return (
     <div className="sheet-backdrop" onKeyDown={(e) => { if (e.key === "Escape") onClose(); if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}>
@@ -79,7 +87,17 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
           <button className="icon" onClick={() => cmd("italic")}><i>I</i></button>
           <button className="icon" onClick={() => cmd("underline")}><u>U</u></button>
           <button className="icon" onClick={() => cmd("insertUnorderedList")}>•</button>
+          <span style={{ flex: 1 }} />
+          <button onClick={attach} title="Attach files (up to 15 MB in total)">📎 Attach</button>
         </div>
+        {files.length > 0 && (
+          <div className="attrow" style={{ padding: "6px 16px" }}>
+            {files.map((p) => (
+              <span key={p} className="attchip"><span className="attname" style={{ padding: "3px 4px 3px 10px" }}>{nameOf(p)}</span>
+                <button className="attsave" title="Remove" onClick={() => setFiles((f) => f.filter((x) => x !== p))}>✕</button></span>
+            ))}
+          </div>
+        )}
         <div className="editor" contentEditable ref={body} suppressContentEditableWarning />
         {error && <div className="error" style={{ padding: "0 16px 12px" }}>{error}</div>}
       </div>
