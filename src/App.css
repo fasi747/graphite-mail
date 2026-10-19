@@ -218,3 +218,6 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .form select, .form textarea { font: inherit; color: var(--text-primary); background: var(--field); border: 0; border-radius: 9px; padding: 7px 10px; }
 .form textarea { resize: vertical; user-select: text; }
+
+.progress { height: 8px; border-radius: 999px; background: var(--field); overflow: hidden; margin: 8px 0; }
+.progress > div { height: 100%; background: var(--accent); transition: width .3s; }

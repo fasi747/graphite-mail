@@ -35,7 +35,7 @@ pub struct MessageDetail {
     row: MessageRow,
     to_json: Option<String>,
     cc_json: Option<String>,
-    body_html: Option<String>,
+    pub(crate) body_html: Option<String>,
 }
 
 const ROW_COLS: &str = "m.id, m.subject, m.sender_name, m.sender_address, m.snippet, m.received_at, m.is_read, m.is_flagged, m.has_attachments";

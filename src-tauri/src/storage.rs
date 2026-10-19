@@ -14,9 +14,12 @@ pub struct Bootstrap {
     pub active_data_root: String,
     pub migration_state: String,
     pub pending_migration_target: Option<String>,
+    /// While a finished move is being tidied up: the folder the data came from.
+    #[serde(default)]
+    pub previous_data_root: Option<String>,
 }
 
-static DB: Mutex<Option<Connection>> = Mutex::new(None);
+pub(crate) static DB: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn config_dir() -> Result<PathBuf> {
     Ok(dirs::config_dir().ok_or(anyhow!("No config dir"))?.join("graphite-mail"))
@@ -40,7 +43,7 @@ pub fn read_bootstrap() -> Option<Bootstrap> {
 }
 
 /// Atomic write: temp file + fsync + rename + fsync parent directory.
-fn write_bootstrap(b: &Bootstrap) -> Result<()> {
+pub(crate) fn write_bootstrap(b: &Bootstrap) -> Result<()> {
     let dir = config_dir()?;
     fs::create_dir_all(&dir)?;
     let tmp = dir.join("bootstrap.json.tmp");
@@ -70,11 +73,14 @@ pub fn initialize(data_root: &str) -> Result<()> {
         active_data_root: data_root.into(),
         migration_state: "IDLE".into(),
         pending_migration_target: None,
+        previous_data_root: None,
     })
 }
 
 /// Opens the DB from bootstrap on app start. Returns false when first-run setup is needed.
 pub fn open_existing() -> Result<bool> {
+    // A move that was interrupted (power cut, crash) is finished or undone first.
+    crate::migrate::recover()?;
     match read_bootstrap() {
         Some(b) if Path::new(&b.active_data_root).join("db").exists() => {
             open_db(Path::new(&b.active_data_root))?;
@@ -84,11 +90,15 @@ pub fn open_existing() -> Result<bool> {
     }
 }
 
-fn open_db(root: &Path) -> Result<()> {
+pub(crate) fn connect(root: &Path) -> Result<Connection> {
     let conn = Connection::open(root.join("db").join("mail_core.sqlite"))?;
     conn.execute_batch(SCHEMA)?;
     migrate(&conn)?;
-    *DB.lock().unwrap() = Some(conn);
+    Ok(conn)
+}
+
+fn open_db(root: &Path) -> Result<()> {
+    *DB.lock().unwrap() = Some(connect(root)?);
     Ok(())
 }
 

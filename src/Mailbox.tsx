@@ -7,6 +7,7 @@ import { DragBar, TrafficLights } from "./WindowControls";
 import Icon from "./Icon";
 import Compose, { ComposeInit } from "./Compose";
 import CalendarView, { Cal } from "./CalendarView";
+import Settings from "./Settings";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 type Account = { email: string; display_name: string };
@@ -106,6 +107,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   const [toast, setToast] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const pending = queue.filter((q) => !q.failed).length;
   const rejected = queue.filter((q) => q.failed).length;
   const refreshQueue = () => invoke<QueueItem[]>("pending_details").then(setQueue).catch(() => {});
@@ -305,6 +307,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
               </div>
             )}
           </div>
+          <button className="icon" onClick={() => setSettingsOpen(true)} title="Settings"><Icon name="settings" /></button>
           <button className="icon" onClick={onSignOut} title="Sign out"><Icon name="signout" /></button>
         </div>
       </nav>
@@ -412,6 +415,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
         <Compose init={compose} onClose={() => setCompose(null)}
           onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
       )}
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       {queueOpen && (
         <div className="sheet-backdrop" onClick={() => setQueueOpen(false)}>
           <div className="sheet evsheet" onClick={(e) => e.stopPropagation()}>

@@ -60,8 +60,12 @@ pub struct SyncReport {
     pub calendar_error: Option<String>,
 }
 
+/// Only one sync at a time; a data-folder move also takes this so nothing is saved mid-move.
+pub static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Full sync pass: folders → message deltas → bodies.
 pub async fn sync_all() -> Result<SyncReport> {
+    let _only_one = SYNC_LOCK.lock().await;
     let acc = auth::current_account().ok_or(anyhow!("Not signed in"))?;
     let account_id = ensure_account(&acc)?;
     let mut rep = SyncReport::default();

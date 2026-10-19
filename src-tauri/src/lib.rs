@@ -1,4 +1,5 @@
 mod http;
+mod migrate;
 mod storage;
 mod auth;
 mod calendar;
@@ -133,6 +134,25 @@ fn discard_failed() -> CmdResult<()> {
 }
 
 #[tauri::command]
+fn data_folder_info() -> CmdResult<migrate::Info> {
+    migrate::info().map_err(|e| e.to_string())
+}
+
+/// Moves the database and saved mail to a new folder, safely. Progress is sent as "migration-progress" events.
+#[tauri::command]
+async fn move_data_folder(app: tauri::AppHandle, target: String) -> CmdResult<String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        migrate::run(&target, |p| {
+            let _ = app.emit("migration-progress", p);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_calendars() -> CmdResult<Vec<calendar::Calendar>> {
     calendar::calendars().map_err(|e| e.to_string())
 }
@@ -250,6 +270,8 @@ pub fn run() {
             send_mail,
             pending_actions,
             pending_details,
+            data_folder_info,
+            move_data_folder,
             retry_pending,
             discard_failed,
             list_calendars,
