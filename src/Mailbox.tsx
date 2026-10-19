@@ -41,7 +41,8 @@ function buildDoc(html: string, allowRemote: boolean, dark: boolean) {
   DOMPurify.removeAllHooks();
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     if (node.tagName === "A") {
-      node.setAttribute("target", "_blank");
+      // A click navigates the email frame; the app (Rust side) intercepts that and opens the system browser.
+      node.setAttribute("target", "_self");
       node.setAttribute("rel", "noopener noreferrer");
     }
     if (!allowRemote) {
@@ -189,10 +190,16 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   useEffect(() => {
     loadFolders().then(syncNow);
     const un = listen("sync-finished", () => { loadFolders(); loadMessages(); });
+    // Links clicked inside an email are handled by the app shell (Rust) and reported here.
+    const un2 = listen<string>("mailto", (e) => {
+      const to = decodeURIComponent(e.payload.slice(7).split("?")[0]);
+      setCompose({ mode: "new", to: to ? [to] : [] });
+    });
+    const un3 = listen<string>("link-failed", () => flash("Couldn't open the link in your web browser."));
     const on = () => setOnline(true), off = () => setOnline(false);
     addEventListener("online", on);
     addEventListener("offline", off);
-    return () => { un.then((f) => f()); removeEventListener("online", on); removeEventListener("offline", off); };
+    return () => { un.then((f) => f()); un2.then((f) => f()); un3.then((f) => f()); removeEventListener("online", on); removeEventListener("offline", off); };
   }, []);
 
   useEffect(() => {
@@ -221,20 +228,6 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     if (!m.is_read) {
       invoke("set_read", { id: m.id, read: true }).then(() => { patch(m.id, { is_read: true }); loadFolders(); }).catch(() => {});
     }
-  };
-
-  // Open links from emails in the system browser instead of inside the app.
-  const hookLinks = (frame: HTMLIFrameElement | null) => {
-    const doc = frame?.contentDocument;
-    if (!doc) { invoke("log_js", { message: "hookLinks: no access to message frame" }); return; }
-    doc.addEventListener("click", (ev) => {
-      const a = (ev.target as HTMLElement).closest("a");
-      if (!a) return;
-      ev.preventDefault();
-      const href = a.getAttribute("href") ?? "";
-      if (/^mailto:/i.test(href)) setCompose({ mode: "new", to: [decodeURIComponent(href.slice(7).split("?")[0])] });
-      else if (/^https?:/i.test(href)) invoke("open_link", { url: href }).catch((e) => flash(String(e)));
-    });
   };
 
   const rendered = useMemo(
@@ -369,7 +362,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
             )}
             {rendered ? (
               <div className="bodywrap">
-                <iframe sandbox="allow-same-origin" srcDoc={rendered.doc} title="message" onLoad={(e) => hookLinks(e.currentTarget)} />
+                <iframe sandbox="allow-same-origin" srcDoc={rendered.doc} title="message" />
               </div>
             ) : (
               <div className="empty">This message hasn't been downloaded for offline reading yet. It will appear after the next sync.</div>

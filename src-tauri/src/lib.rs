@@ -156,6 +156,36 @@ fn open_link(app: tauri::AppHandle, url: String) -> CmdResult<()> {
     })
 }
 
+/// Decides every navigation request of the app window (including those from the email frame).
+/// Web links open in the system browser; mailto: links start a new message; the app itself loads normally.
+/// This runs inside the web engine, so it works even though scripts are switched off inside emails.
+fn allow_navigation(app: &tauri::AppHandle, url: &tauri::Url) -> bool {
+    use tauri::Emitter;
+    match url.scheme() {
+        "about" | "tauri" | "ipc" | "asset" => true,
+        "http" | "https" => {
+            if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "tauri.localhost" | "ipc.localhost" | "asset.localhost")) {
+                return true; // the app itself (dev server / bundled files)
+            }
+            let (app, url) = (app.clone(), url.to_string());
+            // Off the UI thread, so a slow browser start can never freeze the window.
+            std::thread::spawn(move || {
+                eprintln!("[graphite] opening link: {url}");
+                if let Err(e) = app.opener().open_url(&url, None::<&str>) {
+                    eprintln!("[graphite] could not open link: {e}");
+                    let _ = app.emit("link-failed", url);
+                }
+            });
+            false
+        }
+        "mailto" => {
+            let _ = app.emit("mailto", url.to_string());
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Lets the UI report JavaScript errors to the terminal for debugging.
 #[tauri::command]
 fn log_js(message: String) {
@@ -209,6 +239,11 @@ pub fn run() {
             log_js
         ])
         .setup(|app| {
+            let handle = app.handle().clone();
+            let cfg = app.config().app.windows[0].clone();
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
+                .on_navigation(move |url| allow_navigation(&handle, url))
+                .build()?;
             spawn_sync_loop(app.handle().clone());
             Ok(())
         })
