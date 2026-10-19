@@ -1,3 +1,4 @@
+mod http;
 mod storage;
 mod auth;
 mod calendar;
@@ -114,6 +115,24 @@ fn pending_actions() -> CmdResult<i64> {
 }
 
 #[tauri::command]
+fn pending_details() -> CmdResult<Vec<outbox::QueueItem>> {
+    outbox::overview().map_err(|e| e.to_string())
+}
+
+/// Puts changes that were rejected back in line for another try, and tries them now.
+#[tauri::command]
+async fn retry_pending() -> CmdResult<()> {
+    outbox::retry_failed().map_err(|e| e.to_string())?;
+    outbox::replay().await.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Gives up on changes the server rejected.
+#[tauri::command]
+fn discard_failed() -> CmdResult<()> {
+    outbox::discard_failed().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_calendars() -> CmdResult<Vec<calendar::Calendar>> {
     calendar::calendars().map_err(|e| e.to_string())
 }
@@ -201,7 +220,7 @@ fn spawn_sync_loop(app: tauri::AppHandle) {
             if auth::current_account().is_some() && storage::read_bootstrap().is_some() {
                 let res = sync::sync_all().await.map_err(|e| e.to_string());
                 if let Err(e) = &res { eprintln!("[graphite] background sync failed: {e}"); }
-                let _ = app.emit("sync-finished", res.is_ok());
+                let _ = app.emit("sync-finished", res);
             }
         }
     });
@@ -230,6 +249,9 @@ pub fn run() {
             delete_message,
             send_mail,
             pending_actions,
+            pending_details,
+            retry_pending,
+            discard_failed,
             list_calendars,
             list_events,
             rsvp_event,

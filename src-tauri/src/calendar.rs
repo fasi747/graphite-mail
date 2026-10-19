@@ -12,7 +12,7 @@ const FUTURE_DAYS: i64 = 365;
 
 async fn get(url: &str) -> Result<Value> {
     let token = auth::access_token().await?;
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get(url)
         .bearer_auth(token)
         .header("Prefer", "outlook.timezone=\"UTC\", odata.maxpagesize=200")

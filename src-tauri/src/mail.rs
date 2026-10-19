@@ -165,6 +165,7 @@ mod tests {
 
     #[test]
     fn local_queries_and_search() {
+        let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("gm-test-{}", uuid::Uuid::new_v4()));
         unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();

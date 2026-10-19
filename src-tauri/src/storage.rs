@@ -103,8 +103,16 @@ fn migrate(conn: &Connection) -> Result<()> {
         // 0 = embedded pictures not fetched yet (checked on the next sync).
         conn.execute_batch("ALTER TABLE messages ADD COLUMN inline_done INTEGER DEFAULT 0")?;
     }
+    if !has("offline_mutation_queue", "failed")? {
+        // 1 = the server turned this change down; it stays listed so nothing is lost silently.
+        conn.execute_batch("ALTER TABLE offline_mutation_queue ADD COLUMN failed INTEGER DEFAULT 0")?;
+    }
     Ok(())
 }
+
+/// Tests share one global database, so they take turns.
+#[cfg(test)]
+pub static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn with_db<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let g = DB.lock().unwrap();

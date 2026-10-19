@@ -134,16 +134,23 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
 }
 
 async fn token_request(form: &[(&str, &str)]) -> Result<TokenResponse> {
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .post(format!("{AUTHORITY}/token"))
         .form(form)
         .send()
         .await?;
     if !resp.status().is_success() {
-        return Err(anyhow!(
-            "Token error: {}",
-            resp.text().await.unwrap_or_default()
-        ));
+        let text = resp.text().await.unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        return Err(match v["error"].as_str() {
+            Some("invalid_grant" | "interaction_required" | "consent_required") => {
+                anyhow!("Your Microsoft sign-in has expired. Please sign out and sign in again.")
+            }
+            _ => anyhow!(
+                "Microsoft sign-in failed: {}",
+                v["error_description"].as_str().and_then(|d| d.lines().next()).unwrap_or("unknown error")
+            ),
+        });
     }
     let tok: TokenResponse = resp.json().await?;
     *CACHE.lock().unwrap() = Some(Cached {
@@ -161,7 +168,7 @@ async fn fetch_me(token: &str) -> Result<Account> {
         mail: Option<String>,
         user_principal_name: String,
     }
-    let me: Me = reqwest::Client::new()
+    let me: Me = crate::http::client()
         .get("https://graph.microsoft.com/v1.0/me")
         .bearer_auth(token)
         .send()
@@ -177,6 +184,10 @@ async fn fetch_me(token: &str) -> Result<Account> {
 
 /// Returns a valid access token, refreshing silently via the keyring-stored refresh token.
 pub async fn access_token() -> Result<String> {
+    #[cfg(test)]
+    if let Ok(t) = std::env::var("GM_TEST_TOKEN") {
+        return Ok(t);
+    }
     if let Some(c) = CACHE.lock().unwrap().as_ref() {
         if Instant::now() < c.expires {
             return Ok(c.token.clone());

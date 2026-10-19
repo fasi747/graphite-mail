@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -15,9 +15,18 @@ type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
   snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean;
 };
+type QueueItem = { seq: number; what: string; failed: boolean; tries: number; error: string | null };
 type Detail = Msg & { to_json: string | null; cc_json: string | null; body_html: string | null };
 
+type SyncReport = { messages_changed: number; replay_error: string | null; calendar_error: string | null };
 const PAGE = 200;
+
+/** One plain-language line describing how the last sync went. */
+function syncStatus(r: SyncReport) {
+  if (r.replay_error) return `Couldn't send your changes: ${r.replay_error}`;
+  if (r.calendar_error) return `Mail is up to date, but the calendar failed: ${r.calendar_error}`;
+  return r.messages_changed ? `Synced · ${r.messages_changed} new` : "Up to date";
+}
 
 function fmtDate(ts: number) {
   const d = new Date(ts * 1000);
@@ -66,6 +75,18 @@ function buildDoc(html: string, allowRemote: boolean, dark: boolean) {
   return { doc, blocked };
 }
 
+/** Keeps a crash in one pane from taking the whole app down, and says what happened in plain words. */
+class PaneBoundary extends React.Component<{ children: React.ReactNode }, { err: string | null }> {
+  state = { err: null as string | null };
+  static getDerivedStateFromError(e: Error) { return { err: e.message }; }
+  componentDidCatch(e: Error) { invoke("log_js", { message: `calendar crashed: ${e.message}\n${e.stack}` }); }
+  render() {
+    return this.state.err
+      ? <section className="calendar"><div className="empty">The calendar couldn't be shown ({this.state.err}).<br /><button onClick={() => this.setState({ err: null })}>Try again</button></div></section>
+      : this.props.children;
+  }
+}
+
 export default function Mailbox({ account, onSignOut }: { account: Account; onSignOut: () => void }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -83,7 +104,11 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   const scroller = useRef<HTMLDivElement>(null);
   const [compose, setCompose] = useState<ComposeInit | null>(null);
   const [toast, setToast] = useState("");
-  const [pending, setPending] = useState(0);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const pending = queue.filter((q) => !q.failed).length;
+  const rejected = queue.filter((q) => q.failed).length;
+  const refreshQueue = () => invoke<QueueItem[]>("pending_details").then(setQueue).catch(() => {});
   const [moveOpen, setMoveOpen] = useState(false);
   const [view, setView] = useState<"mail" | "calendar">("mail");
   const [cals, setCals] = useState<Cal[]>([]);
@@ -109,7 +134,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     const { folderId, query } = viewRef.current;
     if (query.trim()) setMsgs(await invoke<Msg[]>("search_messages", { query }));
     else if (folderId) setMsgs(await invoke<Msg[]>("list_messages", { folderId, offset: 0, limit: PAGE }));
-    invoke<number>("pending_actions").then(setPending).catch(() => {});
+    refreshQueue();
   };
 
   const flash = (t: string) => { setToast(t); setTimeout(() => setToast(""), 2600); };
@@ -124,7 +149,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     if (next) open(next); else setSelected(null);
   };
   const act = async (fn: () => Promise<unknown>, after?: () => void) => {
-    try { await fn(); after?.(); loadFolders(); invoke<number>("pending_actions").then(setPending); }
+    try { await fn(); after?.(); loadFolders(); refreshQueue(); }
     catch (e) { flash(String(e)); }
   };
   const toggleRead = (m: Msg) => act(() => invoke("set_read", { id: m.id, read: !m.is_read }), () => patch(m.id, { is_read: !m.is_read }));
@@ -176,8 +201,8 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     setSyncing(true);
     setStatus("Syncing…");
     try {
-      const r = await invoke<{ folders: number; messages_changed: number; bodies_downloaded: number }>("sync_now");
-      setStatus(r.messages_changed ? `Synced · ${r.messages_changed} new` : "Up to date");
+      const r = await invoke<SyncReport>("sync_now");
+      setStatus(syncStatus(r));
       await loadFolders();
       await loadMessages();
     } catch (e) {
@@ -189,7 +214,11 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
 
   useEffect(() => {
     loadFolders().then(syncNow);
-    const un = listen("sync-finished", () => { loadFolders(); loadMessages(); });
+    const un = listen<{ Ok?: SyncReport; Err?: string }>("sync-finished", (e) => {
+      if (e.payload.Ok) setStatus(syncStatus(e.payload.Ok));
+      else if (e.payload.Err) setStatus(`Sync failed: ${e.payload.Err}`);
+      loadFolders(); loadMessages();
+    });
     // Links clicked inside an email are handled by the app shell (Rust) and reported here.
     const un2 = listen<string>("mailto", (e) => {
       const to = decodeURIComponent(e.payload.slice(7).split("?")[0]);
@@ -242,7 +271,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
     <div className="shell">
       <nav className="sidebar">
         <DragBar><TrafficLights /></DragBar>
-        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => { invoke("log_js", { message: `calendar clicked, view=${view}, calendars=${cals.length}` }); setView(view === "calendar" ? "mail" : "calendar"); }}>
+        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
           <span className="ico"><Icon name="calendar" /></span><span className="name">Calendar</span>
         </div>
         <div className="section">Mailboxes</div>
@@ -257,24 +286,30 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
           {!folders.length && <div className="empty">No folders yet</div>}
           {cals.length > 0 && <div className="section" style={{ padding: "14px 10px 4px" }}>Calendars</div>}
           {cals.map((c) => (
-            <label key={c.id} className="folder calrow">
-              <input type="checkbox" checked={!hiddenCals.has(c.id)} style={{ accentColor: c.color }}
+            <div key={c.id} className="folder calrow" onClick={() => setView("calendar")} title="Open calendar">
+              <input type="checkbox" checked={!hiddenCals.has(c.id)} style={{ accentColor: c.color }} title="Show or hide this calendar"
+                onClick={(e) => e.stopPropagation()}
                 onChange={() => setHiddenCals((h) => { const n = new Set(h); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })} />
               <span className="name">{c.name}</span>
-            </label>
+            </div>
           ))}
         </div>
         <div className="account">
           <div className="avatar">{initials(account.display_name)}</div>
           <div className="who">
             <div>{account.display_name}</div>
-            <div className="muted"><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}{pending > 0 ? ` · ${pending} waiting to sync` : ""}</div>
+            <div className="muted" title={status}><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}</div>
+            {queue.length > 0 && (
+              <div className="muted queue-link" onClick={() => { refreshQueue(); setQueueOpen(true); }} title="See what is waiting">
+                {pending > 0 ? `${pending} waiting to sync` : ""}{pending > 0 && rejected > 0 ? " · " : ""}{rejected > 0 ? `${rejected} not accepted` : ""}
+              </div>
+            )}
           </div>
           <button className="icon" onClick={onSignOut} title="Sign out"><Icon name="signout" /></button>
         </div>
       </nav>
 
-      {view === "calendar" && <CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} />}
+      {view === "calendar" && <PaneBoundary><CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} /></PaneBoundary>}
       {view === "mail" && <>
       <section className="list">
         <div className="toolbar" data-tauri-drag-region>
@@ -375,7 +410,28 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       </>}
       {compose && (
         <Compose init={compose} onClose={() => setCompose(null)}
-          onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); invoke<number>("pending_actions").then(setPending); }} />
+          onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
+      )}
+      {queueOpen && (
+        <div className="sheet-backdrop" onClick={() => setQueueOpen(false)}>
+          <div className="sheet evsheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-bar"><span /><b>Changes waiting to sync</b><button onClick={() => setQueueOpen(false)}>Close</button></div>
+            <div className="evbody">
+              {queue.length === 0 && <div className="muted">Everything is synced.</div>}
+              {queue.map((q) => (
+                <div key={q.seq}>
+                  <b>{q.what}</b> <span className="muted">· {q.failed ? "not accepted by the server" : q.tries ? `will retry (tried ${q.tries}×)` : "waiting"}</span>
+                  {q.error && <div className="muted" style={{ fontSize: 12 }}>{q.error}</div>}
+                </div>
+              ))}
+              {queue.length > 0 && !online && <div className="muted">You're offline. These will be sent when you reconnect.</div>}
+            </div>
+            <div className="sheet-bar">
+              {rejected > 0 ? <button onClick={() => invoke("discard_failed").then(refreshQueue).catch((e) => flash(String(e)))}>Discard not accepted</button> : <span />}
+              <button className="primary" onClick={async () => { try { await invoke("retry_pending"); flash("Sent"); } catch (e) { flash(String(e)); } refreshQueue(); loadFolders(); }}>Try again now</button>
+            </div>
+          </div>
+        </div>
       )}
       {toast && <div className="toast">{toast}</div>}
     </div>

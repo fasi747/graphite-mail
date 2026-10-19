@@ -13,7 +13,7 @@ const MSG_FIELDS: &str = "id,conversationId,internetMessageId,subject,from,toRec
 
 async fn get(url: &str) -> Result<Value> {
     let token = auth::access_token().await?;
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get(url)
         .bearer_auth(token)
         .header("Prefer", "odata.maxpagesize=100, outlook.body-content-type=\"html\"")
@@ -48,13 +48,16 @@ fn ensure_account(acc: &auth::Account) -> Result<String> {
     })
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Clone)]
 pub struct SyncReport {
     pub folders: usize,
     pub messages_changed: usize,
     pub bodies_downloaded: usize,
     pub replayed: usize,
     pub events: usize,
+    /// Set when sending your offline changes failed, or the calendar couldn't be updated.
+    pub replay_error: Option<String>,
+    pub calendar_error: Option<String>,
 }
 
 /// Full sync pass: folders → message deltas → bodies.
@@ -63,7 +66,10 @@ pub async fn sync_all() -> Result<SyncReport> {
     let account_id = ensure_account(&acc)?;
     let mut rep = SyncReport::default();
     // Replay offline actions before pulling, so server state never overwrites local changes.
-    rep.replayed = crate::outbox::replay().await.unwrap_or(0);
+    match crate::outbox::replay().await {
+        Ok(n) => rep.replayed = n,
+        Err(e) => rep.replay_error = Some(e.to_string()),
+    }
     rep.folders = sync_folders(&account_id).await?;
 
     let folders: Vec<(String, String, Option<String>)> = storage::with_db(|db| {
@@ -76,7 +82,13 @@ pub async fn sync_all() -> Result<SyncReport> {
     }
     rep.bodies_downloaded = hydrate_bodies(200).await?;
     let _ = backfill_inline(100).await;
-    rep.events = crate::calendar::sync().await.unwrap_or(0);
+    match crate::calendar::sync().await {
+        Ok(n) => rep.events = n,
+        Err(e) => {
+            eprintln!("[graphite] calendar sync failed: {e}");
+            rep.calendar_error = Some(e.to_string());
+        }
+    }
     Ok(rep)
 }
 

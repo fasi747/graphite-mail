@@ -163,6 +163,7 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 /* Calendar */
 .navitem { margin: 0 8px 2px; }
 .calrow input { margin: 0 4px 0 2px; }
+.queue-link { cursor: pointer; text-decoration: underline; }
 .calendar { grid-column: 2 / 4; background: var(--panel); border-radius: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
 .seg { display: inline-flex; background: var(--field); border-radius: 999px; padding: 2px; margin-right: 8px; }
 .seg button { background: transparent; padding: 4px 12px; }
