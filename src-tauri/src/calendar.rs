@@ -186,6 +186,7 @@ pub struct Calendar {
     color: String,
     is_primary: bool,
     can_edit: bool,
+    account_email: String,
 }
 
 #[derive(Serialize)]
@@ -208,7 +209,7 @@ pub struct Event {
 
 pub fn calendars() -> Result<Vec<Calendar>> {
     storage::with_db(|db| {
-        let mut st = db.prepare("SELECT id,name,color_hex,is_primary,can_edit FROM calendars ORDER BY is_primary DESC, name")?;
+        let mut st = db.prepare("SELECT c.id,c.name,c.color_hex,c.is_primary,c.can_edit,a.email FROM calendars c JOIN accounts a ON a.id=c.account_id ORDER BY a.created_at, c.is_primary DESC, c.name")?;
         let rows = st.query_map([], |r| {
             Ok(Calendar {
                 id: r.get(0)?,
@@ -216,6 +217,7 @@ pub fn calendars() -> Result<Vec<Calendar>> {
                 color: r.get(2)?,
                 is_primary: r.get(3)?,
                 can_edit: r.get(4)?,
+                account_email: r.get(5)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)

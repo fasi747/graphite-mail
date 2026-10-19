@@ -77,11 +77,14 @@ pub fn set_flag(id: &str, flagged: bool) -> Result<()> {
 pub fn move_to(id: &str, folder_id: &str) -> Result<()> {
     storage::with_db(|db| {
         let tx = db.unchecked_transaction()?;
-        let (remote_folder, unread): (String, bool) = tx.query_row(
-            "SELECT f.remote_id, m.is_read=0 FROM folders f, messages m WHERE f.id=?1 AND m.id=?2",
+        let (remote_folder, unread, same_account): (String, bool, bool) = tx.query_row(
+            "SELECT f.remote_id, m.is_read=0, f.account_id=m.account_id FROM folders f, messages m WHERE f.id=?1 AND m.id=?2",
             params![folder_id, id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
+        if !same_account {
+            return Err(anyhow!("A message can only be moved to a folder of its own account."));
+        }
         if unread {
             tx.execute("UPDATE folders SET unread_count=MAX(0,unread_count-1) WHERE id=(SELECT folder_id FROM messages WHERE id=?1)", [id])?;
             tx.execute(
@@ -144,6 +147,16 @@ pub struct Draft {
 /// Queue an outgoing message; it is sent immediately when online, otherwise on reconnect.
 pub fn send(d: Draft) -> Result<()> {
     let _ = account_id()?;
+    // Replies and forwards always go out from the account that received the message.
+    let from = match &d.reply_to {
+        Some(m) => storage::with_db(|db| {
+            Ok(db
+                .query_row("SELECT a.email FROM messages m JOIN accounts a ON a.id=m.account_id WHERE m.id=?1", [m], |r| r.get::<_, String>(0))
+                .optional()?)
+        })?
+        .or_else(|| d.from.clone()),
+        None => d.from.clone(),
+    };
     let entity = d
         .reply_to
         .clone()
@@ -154,7 +167,7 @@ pub fn send(d: Draft) -> Result<()> {
             &entity,
             "SEND",
             json!({ "mode": d.mode, "to": d.to, "cc": d.cc, "subject": d.subject, "html": d.html }),
-            d.from.clone().or_else(auth::active_email),
+            from.or_else(auth::active_email),
         )
     })
 }
@@ -705,5 +718,40 @@ mod tests {
         assert!(replay().await.is_err());
         assert_eq!(pending_count().unwrap(), 1);
         assert!(overview().unwrap()[0].error.is_some());
+    }
+
+    #[test]
+    fn accounts_stay_separate() {
+        let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("gm-acct-{}", uuid::Uuid::new_v4()));
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
+        storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
+        storage::with_db(|db| {
+            db.execute_batch(
+                "INSERT INTO accounts VALUES('a','work@x.com','Work',1),('b','home@y.com','Home',2);
+                 INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('fa','a','ra','Inbox','inbox'),('fb','b','INBOX','Inbox','inbox'),('fb2','b','L1','Family',NULL);
+                 INSERT INTO messages(id,account_id,folder_id,remote_id,received_at) VALUES('ma','a','fa','r1',1),('mb','b','fb','g1',2);",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        // A message can't be filed into another account's folder...
+        assert!(move_to("ma", "fb2").unwrap_err().to_string().contains("own account"));
+        // ...but moving within its account works.
+        move_to("mb", "fb2").unwrap();
+        // A reply is queued for the account that received the message, whatever "from" says.
+        send(Draft { mode: "reply".into(), reply_to: Some("mb".into()), to: vec!["x@z.com".into()], cc: vec![], subject: "Re".into(), html: "hi".into(), from: Some("work@x.com".into()) }).unwrap();
+        let acct: String = storage::with_db(|db| {
+            Ok(db.query_row("SELECT a.email FROM offline_mutation_queue q JOIN accounts a ON a.id=q.account_id WHERE q.operation='SEND'", [], |r| r.get(0))?)
+        })
+        .unwrap();
+        assert_eq!(acct, "home@y.com");
+        // A new message goes from the chosen account.
+        send(Draft { mode: "new".into(), reply_to: None, to: vec!["x@z.com".into()], cc: vec![], subject: "Hi".into(), html: "hi".into(), from: Some("work@x.com".into()) }).unwrap();
+        let n: i64 = storage::with_db(|db| {
+            Ok(db.query_row("SELECT COUNT(*) FROM offline_mutation_queue q JOIN accounts a ON a.id=q.account_id WHERE q.operation='SEND' AND a.email='work@x.com'", [], |r| r.get(0))?)
+        })
+        .unwrap();
+        assert_eq!(n, 1);
     }
 }

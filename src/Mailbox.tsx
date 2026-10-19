@@ -11,11 +11,13 @@ import Settings from "./Settings";
 import { Ribbon, RibbonTab, Group, Big, Small, Stack, BigMenu, NamePrompt } from "./Ribbon";
 import { ask } from "@tauri-apps/plugin-dialog";
 
-type Account = { email: string; display_name: string };
-type Folder = { id: string; remote_id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null };
+type Account = { email: string; display_name: string; provider?: string };
+const ALL = "all-inboxes";
+const PALETTE = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff"];
+type Folder = { id: string; remote_id: string; name: string; well_known: string | null; unread: number; total: number; parent_remote_id: string | null; account_email: string };
 type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
-  snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean;
+  snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean; account_email: string;
 };
 type QueueItem = { seq: number; what: string; failed: boolean; tries: number; error: string | null };
 type Detail = Msg & { to_json: string | null; cc_json: string | null; body_html: string | null };
@@ -77,6 +79,22 @@ function buildDoc(html: string, allowRemote: boolean, dark: boolean) {
   return { doc, blocked };
 }
 
+/** Folders of one account as a tree: children under their parent, indented. */
+function buildTree(folders: Folder[]) {
+  const ids = new Set(folders.map((f) => f.remote_id));
+  const kids = new Map<string, Folder[]>();
+  const roots: Folder[] = [];
+  for (const f of folders) {
+    if (f.parent_remote_id && ids.has(f.parent_remote_id)) {
+      const k = kids.get(f.parent_remote_id) ?? []; k.push(f); kids.set(f.parent_remote_id, k);
+    } else roots.push(f);
+  }
+  const out: { f: Folder; depth: number }[] = [];
+  const walk = (list: Folder[], depth: number) => { for (const f of list) { out.push({ f, depth }); walk(kids.get(f.remote_id) ?? [], depth + 1); } };
+  walk(roots, 0);
+  return out;
+}
+
 /** Keeps a crash in one pane from taking the whole app down, and says what happened in plain words. */
 class PaneBoundary extends React.Component<{ children: React.ReactNode }, { err: string | null }> {
   state = { err: null as string | null };
@@ -89,8 +107,13 @@ class PaneBoundary extends React.Component<{ children: React.ReactNode }, { err:
   }
 }
 
-export default function Mailbox({ account, onSignOut }: { account: Account; onSignOut: () => void }) {
+export default function Mailbox({ account: _first, onSignOut }: { account: Account; onSignOut: () => void }) {
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => { try { return new Set(JSON.parse(localStorage.getItem("collapsedAccts") || "[]")); } catch { return new Set(); } });
+  useEffect(() => { try { localStorage.setItem("collapsedAccts", JSON.stringify([...collapsed])); } catch { /* ignore */ } }, [collapsed]);
+  const colorOf = (email: string) => PALETTE[Math.max(0, accounts.findIndex((a) => a.email.toLowerCase() === email.toLowerCase())) % PALETTE.length];
+  const multi = accounts.length > 1;
   const [folderId, setFolderId] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [selected, setSelected] = useState<Detail | null>(null);
@@ -131,9 +154,16 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
 
   const loadFolders = async () => {
     loadCals();
-    const f = await invoke<Folder[]>("list_folders");
+    const [f, accs] = await Promise.all([invoke<Folder[]>("list_folders"), invoke<Account[]>("list_accounts")]);
     setFolders(f);
-    setFolderId((cur) => cur ?? f.find((x) => x.well_known === "inbox")?.id ?? f[0]?.id ?? null);
+    setAccounts(accs);
+    const firstInbox = f.find((x) => x.well_known === "inbox")?.id ?? f[0]?.id ?? null;
+    setFolderId((cur) => {
+      if (cur === ALL) return accs.length > 1 ? ALL : firstInbox;
+      if (cur && f.some((x) => x.id === cur)) return cur;
+      return accs.length > 1 ? ALL : firstInbox;
+    });
+    return accs;
   };
 
   const loadMessages = async () => {
@@ -168,13 +198,15 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   const moveTo = (m: Msg, f: Folder) => { setMoveOpen(false); act(() => invoke("move_message", { id: m.id, folderId: f.id }), () => { removeFromList(m.id); flash(`Moved to ${f.name}`); }); };
 
   const addrs = (json: string | null) => { try { return (JSON.parse(json || "[]") as { address?: string }[]).map((p) => p.address!).filter(Boolean); } catch { return []; } };
+  /** The account a brand-new message should come from: the folder you're in, else the open message's account. */
+  const newMail = () => setCompose({ mode: "new", from: folders.find((f) => f.id === folderId)?.account_email ?? selected?.account_email ?? accounts[0]?.email });
   const startCompose = (mode: ComposeInit["mode"]) => {
-    if (mode === "new" || !selected) return setCompose({ mode: "new" });
+    if (mode === "new" || !selected) return newMail();
     const s = selected;
-    const me = account.email.toLowerCase();
+    const me = s.account_email.toLowerCase();
     const header = `On ${new Date(s.received_at * 1000).toLocaleString()}, ${s.sender_name ?? ""} &lt;${s.sender_address ?? ""}&gt; wrote:`;
     const subj = s.subject ?? "";
-    const base = { replyTo: s.id, quoteHtml: s.body_html ?? "", quoteHeader: header };
+    const base = { replyTo: s.id, from: s.account_email, quoteHtml: s.body_html ?? "", quoteHeader: header };
     if (mode === "forward") return setCompose({ ...base, mode, subject: /^fw(d)?:/i.test(subj) ? subj : `Fw: ${subj}` });
     const re = /^re:/i.test(subj) ? subj : `Re: ${subj}`;
     const to = [s.sender_address ?? ""].filter(Boolean);
@@ -191,9 +223,9 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       const idx = selected ? msgs.findIndex((m) => m.id === selected.id) : -1;
       if (e.key === "ArrowDown" && msgs[idx + 1]) { e.preventDefault(); open(msgs[idx + 1]); }
       else if (e.key === "ArrowUp" && idx > 0) { e.preventDefault(); open(msgs[idx - 1]); }
-      else if (!selected) { if ((e.ctrlKey || e.metaKey) && e.key === "n") setCompose({ mode: "new" }); }
+      else if (!selected) { if ((e.ctrlKey || e.metaKey) && e.key === "n") newMail(); }
       else if (e.key === "Delete") del(selected);
-      else if ((e.ctrlKey || e.metaKey) && e.key === "n") setCompose({ mode: "new" });
+      else if ((e.ctrlKey || e.metaKey) && e.key === "n") newMail();
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "r") startCompose("replyAll");
       else if ((e.ctrlKey || e.metaKey) && e.key === "r") { e.preventDefault(); startCompose("reply"); }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") startCompose("forward");
@@ -219,7 +251,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   };
 
   useEffect(() => {
-    loadFolders().then(syncNow);
+    loadFolders().then(() => syncNow());
     const un = listen<{ Ok?: SyncReport; Err?: string }>("sync-finished", (e) => {
       if (e.payload.Ok) setStatus(syncStatus(e.payload.Ok));
       else if (e.payload.Err) setStatus(`Sync failed: ${e.payload.Err}`);
@@ -271,47 +303,43 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
   );
 
   const current = folders.find((f) => f.id === folderId);
-
-  // Show folders as a tree: children under their parent, indented.
-  const tree = useMemo(() => {
-    const ids = new Set(folders.map((f) => f.remote_id));
-    const kids = new Map<string, Folder[]>();
-    const roots: Folder[] = [];
-    for (const f of folders) {
-      if (f.parent_remote_id && ids.has(f.parent_remote_id)) {
-        const k = kids.get(f.parent_remote_id) ?? []; k.push(f); kids.set(f.parent_remote_id, k);
-      } else roots.push(f);
-    }
-    const out: { f: Folder; depth: number }[] = [];
-    const walk = (list: Folder[], depth: number) => { for (const f of list) { out.push({ f, depth }); walk(kids.get(f.remote_id) ?? [], depth + 1); } };
-    walk(roots, 0);
-    return out;
-  }, [folders]);
+  const inboxes = folders.filter((f) => f.well_known === "inbox");
+  const allUnread = inboxes.reduce((n, f) => n + f.unread, 0);
+  const allTotal = inboxes.reduce((n, f) => n + f.total, 0);
+  const groups = useMemo(
+    () => accounts.map((acc) => ({ acc, tree: buildTree(folders.filter((f) => f.account_email.toLowerCase() === acc.email.toLowerCase())) })),
+    [accounts, folders],
+  );
+  const providerOf = (email?: string) => accounts.find((a) => a.email.toLowerCase() === email?.toLowerCase())?.provider ?? "microsoft";
 
   const builtIn = !!current?.well_known;
-  const folderAction = async (name: string) => {
+  const folderAction = async (name: string, forAccount?: string) => {
     const kind = prompt?.kind;
     setPrompt(null);
     try {
-      if (kind === "new") { const id = await invoke<string>("create_folder", { name, parentId: null }); flash(`Folder "${name}" created`); await loadFolders(); setFolderId(id); }
+      if (kind === "new") { const id = await invoke<string>("create_folder", { name, parentId: null, account: forAccount ?? null }); flash(`Folder "${name}" created`); await loadFolders(); setFolderId(id); }
       else if (kind === "sub" && current) { const id = await invoke<string>("create_folder", { name, parentId: current.id }); flash(`Folder "${name}" created inside ${current.name}`); await loadFolders(); setFolderId(id); }
       else if (kind === "rename" && current) { await invoke("rename_folder", { id: current.id, name }); flash("Folder renamed"); loadFolders(); }
     } catch (e) { flash(String(e)); }
   };
   const deleteFolder = async () => {
     if (!current || builtIn) return;
-    if (!(await ask(`Delete the folder "${current.name}" and everything in it? Microsoft 365 moves it to Deleted Items.`, { title: "Delete folder", kind: "warning" }))) return;
+    const gmail = providerOf(current.account_email) === "google";
+    if (!(await ask(gmail ? `Delete the label "${current.name}"? Its messages stay in your Gmail account (in All Mail).` : `Delete the folder "${current.name}" and everything in it? Microsoft 365 moves it to Deleted Items.`, { title: "Delete folder", kind: "warning" }))) return;
     try {
       await invoke("delete_folder", { id: current.id });
       flash("Folder deleted");
-      setFolderId(folders.find((f) => f.well_known === "inbox")?.id ?? null);
+      setFolderId(folders.find((f) => f.well_known === "inbox" && f.account_email === current.account_email)?.id ?? null);
       setSelected(null);
       loadFolders();
     } catch (e) { flash(String(e)); }
   };
-  const archiveFolder = folders.find((f) => f.well_known === "archive");
+  const archiveFolder = folders.find((f) => f.well_known === "archive" && f.account_email === selected?.account_email);
   const newMeeting = (teams: boolean) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1 })); };
-  const moveItems = tree.filter(({ f }) => f.id !== folderId && selected).map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => selected && moveTo(selected, f) }));
+  // A message can only be moved within its own account.
+  const moveItems = (selected ? buildTree(folders.filter((f) => f.account_email === selected.account_email)) : [])
+    .filter(({ f }) => f.id !== folderId)
+    .map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => selected && moveTo(selected, f) }));
   const mailTab = view === "mail";
   const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
@@ -324,28 +352,50 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
         </div>
         <div className="section">Mailboxes</div>
         <div className="folders">
-          {tree.map(({ f, depth }) => (
-            <div key={f.id} style={{ paddingLeft: 10 + depth * 16 }} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
-              <span className="ico"><Icon name={f.well_known ?? "folder"} /></span>
-              <span className="name">{f.name}</span>
-              {f.unread > 0 && <span className="count">{f.unread}</span>}
+          {multi && (
+            <div className={`folder ${folderId === ALL && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(ALL); setSelected(null); }}>
+              <span className="ico"><Icon name="inbox" /></span>
+              <span className="name">All Inboxes</span>
+              {allUnread > 0 && <span className="count">{allUnread}</span>}
             </div>
-          ))}
+          )}
+          {groups.map(({ acc, tree }) => {
+            const shut = collapsed.has(acc.email);
+            return (
+              <div key={acc.email} className="acct">
+                <div className="acct-head" onClick={() => setCollapsed((c) => { const n = new Set(c); n.has(acc.email) ? n.delete(acc.email) : n.add(acc.email); return n; })} title={shut ? "Show folders" : "Hide folders"}>
+                  <span className="chev">{shut ? "▸" : "▾"}</span>
+                  <i className="acctdot" style={{ background: colorOf(acc.email) }} />
+                  <span className="acct-name"><b>{acc.display_name}</b><span className="muted">{acc.email}</span></span>
+                </div>
+                {!shut && tree.map(({ f, depth }) => (
+                  <div key={f.id} style={{ paddingLeft: 10 + depth * 16 }} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
+                    <span className="ico"><Icon name={f.well_known ?? "folder"} /></span>
+                    <span className="name">{f.name}</span>
+                    {f.unread > 0 && <span className="count">{f.unread}</span>}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
           {!folders.length && <div className="empty">No folders yet</div>}
           {cals.length > 0 && <div className="section" style={{ padding: "14px 10px 4px" }}>Calendars</div>}
-          {cals.map((c) => (
-            <div key={c.id} className="folder calrow" onClick={() => setView("calendar")} title="Open calendar">
+          {cals.map((c, i) => (
+            <React.Fragment key={c.id}>
+            {multi && (i === 0 || cals[i - 1].account_email !== c.account_email) && <div className="muted acct-sub">{accounts.find((a) => a.email.toLowerCase() === c.account_email.toLowerCase())?.display_name ?? c.account_email}</div>}
+            <div className="folder calrow" onClick={() => setView("calendar")} title="Open calendar">
               <input type="checkbox" checked={!hiddenCals.has(c.id)} style={{ accentColor: c.color }} title="Show or hide this calendar"
                 onClick={(e) => e.stopPropagation()}
                 onChange={() => setHiddenCals((h) => { const n = new Set(h); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })} />
               <span className="name">{c.name}</span>
             </div>
+            </React.Fragment>
           ))}
         </div>
         <div className="account">
-          <div className="avatar">{initials(account.display_name)}</div>
+          <div className="avatar">{multi ? String(accounts.length) : initials(accounts[0]?.display_name ?? _first.display_name)}</div>
           <div className="who">
-            <div>{account.display_name}</div>
+            <div>{multi ? `${accounts.length} accounts` : accounts[0]?.display_name ?? _first.display_name}</div>
             <div className="muted" title={status}><span className={`dot ${online ? "" : "off"}`} />{online ? status || "Online" : "Offline – saved mail"}</div>
             {queue.length > 0 && (
               <div className="muted queue-link" onClick={() => { refreshQueue(); setQueueOpen(true); }} title="See what is waiting">
@@ -354,14 +404,14 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
             )}
           </div>
           <button className="icon" onClick={() => setSettingsOpen(true)} title="Settings"><Icon name="settings" /></button>
-          <button className="icon" onClick={onSignOut} title="Sign out"><Icon name="signout" /></button>
+          <button className="icon" onClick={async () => { if (await ask(multi ? "Sign out of all accounts? Their downloaded mail is removed from this computer (nothing is deleted on the servers)." : "Sign out? Your downloaded mail is removed from this computer (nothing is deleted on the server).", { title: "Sign out", kind: "warning" })) onSignOut(); }} title={multi ? "Sign out of all accounts" : "Sign out"}><Icon name="signout" /></button>
         </div>
       </nav>
 
       <Ribbon tabs={[{ id: "home", label: "Home" }, { id: "folder", label: "Folder" }, { id: "view", label: "View" }]} active={tab} onTab={setTab}>
         {tab === "home" && <>
           <Group label="New">
-            <Big icon="compose" label="New Email" accent onClick={() => setCompose({ mode: "new" })} title="New email (Ctrl+N)" />
+            <Big icon="compose" label="New Email" accent onClick={() => newMail()} title="New email (Ctrl+N)" />
             <Big icon="meeting" label="New Meeting" onClick={() => newMeeting(true)} title="New Teams meeting" />
             <Stack><Small icon="calendar" label="New Event" onClick={() => newMeeting(false)} /></Stack>
           </Group>
@@ -425,8 +475,8 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       <section className="list">
         <div className="toolbar" data-tauri-drag-region>
           <div className="title" data-tauri-drag-region>
-            <b>{query ? "Search" : current?.name ?? "Mail"}</b>
-            <span>{query ? `${msgs.length} results` : current ? `${current.total} messages${current.unread ? `, ${current.unread} unread` : ""}` : ""}</span>
+            <b>{query ? "Search" : folderId === ALL ? "All Inboxes" : current?.name ?? "Mail"}</b>
+            <span>{query ? `${msgs.length} results` : folderId === ALL ? `${allTotal} messages${allUnread ? `, ${allUnread} unread` : ""}` : current ? `${current.total} messages${current.unread ? `, ${current.unread} unread` : ""}${multi ? ` · ${current.account_email}` : ""}` : ""}</span>
           </div>
           <button className="icon" onClick={syncNow} disabled={syncing || !online} title="Get new mail"><span className={syncing ? "spin" : ""}><Icon name="refresh" /></span></button>
         </div>
@@ -444,7 +494,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
                   <div key={m.id} className={`msg ${m.is_read ? "" : "unread"} ${selected?.id === m.id ? "active" : ""}`}
                     style={{ top: v.start }} onClick={() => open(m)}>
                     <div className="top">
-                      <span className="from">{m.sender_name || m.sender_address || "(no sender)"}</span>
+                      <span className="from">{multi && (folderId === ALL || query) && <i className="acctdot" style={{ background: colorOf(m.account_email) }} title={m.account_email} />}{m.sender_name || m.sender_address || "(no sender)"}</span>
                       <span className="date">{m.has_attachments && <Icon name="paperclip" size={12} />}{m.is_flagged && <span style={{ color: "#ff9f0a" }}><Icon name="flag" size={12} /></span>}{fmtDate(m.received_at)}</span>
                     </div>
                     <div className="subj">{m.subject || "(no subject)"}</div>
@@ -468,6 +518,7 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
                   <div><b>{selected.sender_name || selected.sender_address}</b> &lt;{selected.sender_address}&gt;</div>
                   {people(selected.to_json) && <div>To: {people(selected.to_json)}</div>}
                   {people(selected.cc_json) && <div>Cc: {people(selected.cc_json)}</div>}
+                  {multi && <div><i className="acctdot" style={{ background: colorOf(selected.account_email) }} />Received in {selected.account_email}</div>}
                 </div>
                 <div className="when">{new Date(selected.received_at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
               </div>
@@ -492,15 +543,21 @@ export default function Mailbox({ account, onSignOut }: { account: Account; onSi
       </section>
       </>}
       {compose && (
-        <Compose init={compose} onClose={() => setCompose(null)}
+        <Compose init={compose} accounts={accounts} onClose={() => setCompose(null)}
           onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
       )}
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <Settings accounts={accounts} onClose={() => setSettingsOpen(false)}
+        onAccountsChanged={async () => {
+          const accs = await loadFolders();
+          if (!accs.length) { setSettingsOpen(false); onSignOut(); } else syncNow();
+        }} />}
       {prompt && (
         <NamePrompt
           title={prompt.kind === "rename" ? `Rename “${current?.name}”` : prompt.kind === "sub" ? `New folder inside “${current?.name}”` : "New folder"}
           initial={prompt.kind === "rename" ? current?.name : ""}
           confirm={prompt.kind === "rename" ? "Rename" : "Create"}
+          accounts={prompt.kind === "new" && multi ? accounts : undefined}
+          defaultAccount={current?.account_email ?? selected?.account_email ?? accounts[0]?.email}
           onCancel={() => setPrompt(null)} onSubmit={folderAction} />
       )}
       {queueOpen && (

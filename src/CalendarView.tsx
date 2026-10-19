@@ -4,7 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import DOMPurify from "dompurify";
 import Icon from "./Icon";
 
-export type Cal = { id: string; name: string; color: string; is_primary: boolean; can_edit: boolean };
+export type Cal = { id: string; name: string; color: string; is_primary: boolean; can_edit: boolean; account_email: string };
 type Ev = {
   id: string; calendar_id: string; title: string; description_html: string | null; location: string | null;
   online_meeting_url: string | null; start_utc: number; end_utc: number; is_all_day: boolean;
@@ -295,7 +295,7 @@ function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { st
           </div>
           <label>Calendar
             <select value={calId} onChange={(e) => setCalId(e.target.value)}>
-              {calendars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {calendars.map((c) => <option key={c.id} value={c.id}>{c.name}{calendars.some((o) => o.account_email !== c.account_email) ? ` (${c.account_email})` : ""}</option>)}
             </select>
           </label>
           <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />

@@ -78,19 +78,31 @@ export function BigMenu({ icon, label, disabled, items }: { icon: string; label:
   );
 }
 
-/** Small sheet asking for a single text value (folder names etc.). */
-export function NamePrompt({ title, initial, confirm, onCancel, onSubmit }: { title: string; initial?: string; confirm: string; onCancel: () => void; onSubmit: (v: string) => void }) {
+/** Small sheet asking for a single text value (folder names etc.), optionally with an account to put it in. */
+export function NamePrompt({ title, initial, confirm, onCancel, onSubmit, accounts, defaultAccount }: {
+  title: string; initial?: string; confirm: string; onCancel: () => void; onSubmit: (v: string, account?: string) => void;
+  accounts?: { email: string; display_name: string }[]; defaultAccount?: string;
+}) {
   const [v, setV] = useState(initial ?? "");
+  const [acct, setAcct] = useState(defaultAccount ?? accounts?.[0]?.email ?? "");
+  const go = () => v.trim() && onSubmit(v.trim(), accounts ? acct : undefined);
   return (
     <div className="sheet-backdrop" onClick={onCancel}>
       <div className="sheet promptsheet" onClick={(e) => e.stopPropagation()}>
         <div className="form">
           <b style={{ fontSize: 15 }}>{title}</b>
+          {accounts && (
+            <label>Create in account
+              <select value={acct} onChange={(e) => setAcct(e.target.value)}>
+                {accounts.map((a) => <option key={a.email} value={a.email}>{a.display_name} ({a.email})</option>)}
+              </select>
+            </label>
+          )}
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} placeholder="Folder name"
-            onKeyDown={(e) => { if (e.key === "Enter" && v.trim()) onSubmit(v.trim()); if (e.key === "Escape") onCancel(); }} />
+            onKeyDown={(e) => { if (e.key === "Enter") go(); if (e.key === "Escape") onCancel(); }} />
           <div className="prompt-actions">
             <button onClick={onCancel}>Cancel</button>
-            <button className="primary" disabled={!v.trim()} onClick={() => onSubmit(v.trim())}>{confirm}</button>
+            <button className="primary" disabled={!v.trim()} onClick={go}>{confirm}</button>
           </div>
         </div>
       </div>

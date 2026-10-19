@@ -28,6 +28,7 @@ pub struct MessageRow {
     is_read: bool,
     is_flagged: bool,
     has_attachments: bool,
+    account_email: String,
 }
 
 #[derive(Serialize)]
@@ -39,7 +40,8 @@ pub struct MessageDetail {
     pub(crate) body_html: Option<String>,
 }
 
-const ROW_COLS: &str = "m.id, m.subject, m.sender_name, m.sender_address, m.snippet, m.received_at, m.is_read, m.is_flagged, m.has_attachments";
+const ROW_COLS: &str = "m.id, m.subject, m.sender_name, m.sender_address, m.snippet, m.received_at, m.is_read, m.is_flagged, m.has_attachments, a.email";
+const ROW_FROM: &str = "messages m JOIN accounts a ON a.id=m.account_id";
 
 fn map_row(r: &rusqlite::Row) -> rusqlite::Result<MessageRow> {
     Ok(MessageRow {
@@ -52,6 +54,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<MessageRow> {
         is_read: r.get(6)?,
         is_flagged: r.get(7)?,
         has_attachments: r.get(8)?,
+        account_email: r.get(9)?,
     })
 }
 
@@ -88,7 +91,7 @@ pub fn messages(folder_id: &str, offset: i64, limit: i64) -> Result<Vec<MessageR
             "m.folder_id=?1"
         };
         let mut st = db.prepare(&format!(
-            "SELECT {ROW_COLS} FROM messages m WHERE {filter} ORDER BY m.received_at DESC LIMIT ?2 OFFSET ?3"
+            "SELECT {ROW_COLS} FROM {ROW_FROM} WHERE {filter} ORDER BY m.received_at DESC LIMIT ?2 OFFSET ?3"
         ))?;
         let rows = st.query_map(params![folder_id, limit, offset], map_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -107,7 +110,7 @@ pub fn search(q: &str, limit: i64) -> Result<Vec<MessageRow>> {
     let fts = format!("{}*", terms.join(" "));
     storage::with_db(|db| {
         let mut st = db.prepare(&format!(
-            "SELECT {ROW_COLS} FROM messages_fts f JOIN messages m ON m.id=f.message_id
+            "SELECT {ROW_COLS} FROM messages_fts f JOIN messages m ON m.id=f.message_id JOIN accounts a ON a.id=m.account_id
              WHERE messages_fts MATCH ?1 ORDER BY m.received_at DESC LIMIT ?2"
         ))?;
         let rows = st.query_map(params![fts, limit], map_row)?;
@@ -119,9 +122,9 @@ pub fn message(id: &str) -> Result<MessageDetail> {
     let (row, to, cc, hash): (MessageRow, Option<String>, Option<String>, Option<String>) =
         storage::with_db(|db| {
             Ok(db.query_row(
-            &format!("SELECT {ROW_COLS}, m.to_recipients_json, m.cc_recipients_json, m.body_blob_hash FROM messages m WHERE m.id=?1"),
+            &format!("SELECT {ROW_COLS}, m.to_recipients_json, m.cc_recipients_json, m.body_blob_hash FROM {ROW_FROM} WHERE m.id=?1"),
             [id],
-            |r| Ok((map_row(r)?, r.get(9)?, r.get(10)?, r.get(11)?)),
+            |r| Ok((map_row(r)?, r.get(10)?, r.get(11)?, r.get(12)?)),
         )?)
         })?;
     let body_html = hash

@@ -4,11 +4,14 @@ import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 
 type Info = { path: string; size_bytes: number };
+type Acct = { email: string; display_name: string; provider?: string };
+const PALETTE = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff"];
 type Progress = { phase: number; label: string; done: number; total: number };
 
 const fmtSize = (b: number) => (b > 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : `${Math.max(1, Math.round(b / (1 << 20)))} MB`);
 
-export default function Settings({ onClose }: { onClose: () => void }) {
+export default function Settings({ accounts, onClose, onAccountsChanged }: { accounts: Acct[]; onClose: () => void; onAccountsChanged: () => void }) {
+  const [adding, setAdding] = useState<"microsoft" | "google" | null>(null);
   const [info, setInfo] = useState<Info | null>(null);
   const [moving, setMoving] = useState<Progress | null>(null);
   const [message, setMessage] = useState("");
@@ -19,6 +22,23 @@ export default function Settings({ onClose }: { onClose: () => void }) {
     setNotifs(on);
     try { await invoke("set_notifications", { on }); } catch (e) { setError(String(e)); setNotifs(!on); }
   };
+
+  async function add(kind: "microsoft" | "google") {
+    setError(""); setMessage(""); setAdding(kind);
+    try {
+      const a = await invoke<Acct>(kind === "google" ? "add_google_account" : "sign_in");
+      setMessage(`${a.email} is signed in. Downloading its mail…`);
+      onAccountsChanged();
+    } catch (e) { setError(String(e)); }
+    finally { setAdding(null); }
+  }
+  async function remove(a: Acct) {
+    setError(""); setMessage("");
+    const yes = await ask(`Remove ${a.email}?\n\nIts downloaded mail and calendar are deleted from this computer. Nothing is deleted on the server, and you can add the account again any time.`, { title: "Remove account", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" });
+    if (!yes) return;
+    try { await invoke("remove_account", { email: a.email }); setMessage(`${a.email} was removed.`); onAccountsChanged(); }
+    catch (e) { setError(String(e)); }
+  }
 
   const load = () => invoke<Info>("data_folder_info").then(setInfo).catch((e) => setError(String(e)));
   useEffect(() => {
@@ -56,7 +76,20 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       <div className="sheet evsheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-bar"><span /><b>Settings</b><button disabled={!!moving} onClick={onClose}>Close</button></div>
         <div className="evbody">
-          <div className="muted" style={{ fontSize: 11, fontWeight: 600 }}>NOTIFICATIONS</div>
+          <div className="muted" style={{ fontSize: 11, fontWeight: 600 }}>ACCOUNTS</div>
+          {accounts.map((a, i) => (
+            <div key={a.email} className="acctrow">
+              <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
+              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {a.provider === "google" ? "Gmail" : "Microsoft 365"}</span></div>
+              <button disabled={!!moving} onClick={() => remove(a)}>Remove</button>
+            </div>
+          ))}
+          <div className="rowbtns">
+            <button disabled={!!adding || !!moving} onClick={() => add("microsoft")}>{adding === "microsoft" ? "Waiting for browser…" : "Add Microsoft account"}</button>
+            <button disabled={!!adding || !!moving} onClick={() => add("google")}>{adding === "google" ? "Waiting for browser…" : "Add Google account"}</button>
+          </div>
+          {adding && <div className="muted" style={{ fontSize: 12 }}>Finish signing in in your web browser, then come back here.</div>}
+          <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>NOTIFICATIONS</div>
           <label className="switchrow">
             <span>Show a desktop notification when new mail arrives in the Inbox</span>
             <input type="checkbox" className="switch" checked={notifs} onChange={(e) => toggleNotifs(e.target.checked)} />

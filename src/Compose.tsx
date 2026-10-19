@@ -10,12 +10,16 @@ export type ComposeInit = {
   subject?: string;
   quoteHtml?: string;
   quoteHeader?: string;
+  /** Account (email) to send from. */
+  from?: string;
 };
+type Acct = { email: string; display_name: string };
 
 const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
 const valid = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
-export default function Compose({ init, onClose, onSent }: { init: ComposeInit; onClose: () => void; onSent: (queued: boolean) => void }) {
+export default function Compose({ init, accounts, onClose, onSent }: { init: ComposeInit; accounts: Acct[]; onClose: () => void; onSent: (queued: boolean) => void }) {
+  const [from, setFrom] = useState(init.from ?? accounts[0]?.email ?? "");
   const [to, setTo] = useState((init.to ?? []).join(", "));
   const [cc, setCc] = useState((init.cc ?? []).join(", "));
   const [subject, setSubject] = useState(init.subject ?? "");
@@ -41,7 +45,7 @@ export default function Compose({ init, onClose, onSent }: { init: ComposeInit; 
     try {
       const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${body.current?.innerHTML ?? ""}</div>`;
       const sent = await invoke<boolean>("send_mail", {
-        draft: { mode: init.mode, reply_to: init.replyTo ?? null, to: toList, cc: ccList, subject, html },
+        draft: { mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to: toList, cc: ccList, subject, html },
       });
       onSent(!sent);
     } catch (e) {
@@ -60,6 +64,13 @@ export default function Compose({ init, onClose, onSent }: { init: ComposeInit; 
           <b>{subject || "New Message"}</b>
           <button className="primary" onClick={send} disabled={sending}>{sending ? "Sending…" : "Send"}</button>
         </div>
+        {accounts.length > 1 && (
+          <label className="field"><span>From:</span>
+            <select value={from} onChange={(e) => setFrom(e.target.value)} disabled={!!init.replyTo} title={init.replyTo ? "Replies and forwards are sent from the account that received the message" : undefined}>
+              {accounts.map((a) => <option key={a.email} value={a.email}>{a.display_name} &lt;{a.email}&gt;</option>)}
+            </select>
+          </label>
+        )}
         <label className="field"><span>To:</span><input id="cmp-to" value={to} onChange={(e) => setTo(e.target.value)} /></label>
         <label className="field"><span>Cc:</span><input value={cc} onChange={(e) => setCc(e.target.value)} /></label>
         <label className="field"><span>Subject:</span><input value={subject} onChange={(e) => setSubject(e.target.value)} /></label>

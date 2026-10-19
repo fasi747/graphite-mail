@@ -280,3 +280,22 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .2s; }
 .switch:checked { background: #30d158; }
 .switch:checked::after { left: 18px; }
+
+/* Multiple accounts */
+.acct { margin-bottom: 4px; }
+.acct-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px 4px; cursor: default; user-select: none; }
+.acct-head:hover .acct-name b { color: var(--accent); }
+.chev { width: 10px; font-size: 10px; color: var(--text-secondary); }
+.acct-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.acct-name b { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-name .muted { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acctdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; margin-right: 5px; }
+.acct-head .acctdot { margin-right: 0; }
+.acct-sub { font-size: 11px; padding: 6px 10px 2px; }
+.acctrow { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.acctrow .acct-name { flex: 1; }
+.acctrow .acctdot { margin: 0; }
+.rowbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+.field select, .form select { flex: 1; min-width: 0; }
+.field select { background: transparent; border: 0; padding: 8px 0; color: inherit; font: inherit; }
+.field select:focus { outline: none; }
