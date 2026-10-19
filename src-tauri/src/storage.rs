@@ -264,6 +264,20 @@ CREATE TABLE IF NOT EXISTS account_state (
     PRIMARY KEY (account_id, key)
 );
 
+-- Unfinished messages (kept on this computer only).
+CREATE TABLE IF NOT EXISTS drafts (
+    id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL DEFAULT 'new',
+    reply_to TEXT,
+    from_email TEXT,
+    to_text TEXT NOT NULL DEFAULT '',
+    cc_text TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL DEFAULT '',
+    html TEXT NOT NULL DEFAULT '',
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    updated_at INTEGER NOT NULL
+);
+
 -- Mail rules (kept on the server as Outlook rules / Gmail filters; mirrored here).
 CREATE TABLE IF NOT EXISTS rules (
     id TEXT PRIMARY KEY,

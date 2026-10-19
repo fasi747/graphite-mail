@@ -50,6 +50,12 @@ You can use more than one account at the same time.
 - Forwarding does not include the original attachments (Gmail doesn't do that for apps).
 - Google Calendar works like the Microsoft calendar; **Google Meet video call** adds a Meet link to a new event.
 
+## Signatures and drafts
+
+- **Signature:** gear → **Signature**. Write one per account and click **Save signature**. It is added to every new message, reply and forward. If you change the **From** account, the signature changes with it.
+- **Drafts:** if you cancel a message you started, Graphite Mail asks whether to **Save draft**. While you write, it also saves automatically every 20 seconds. Find them under **Home → Drafts**: **Open** continues where you stopped, **Delete** removes it. Sending a message deletes its draft.
+- Drafts live **on this computer only**; they don't show up in the Drafts folder of Outlook or Gmail.
+
 ## Attachments
 
 - **Reading:** a message with files shows them as small chips under the header (name and size). Click a chip to **open** it with your normal program, or **Save** to keep a copy wherever you like. The file is downloaded the first time and then kept, so it also opens offline.

@@ -60,9 +60,9 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .muted { color: var(--text-secondary); }
 
 /* Window controls (traffic lights) */
-.traffic { display: flex; gap: 8px; padding: 2px; }
-.traffic span { width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; font-size: 9px; line-height: 1; color: transparent; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.15); }
-.traffic:hover span { color: rgba(0,0,0,.55); }
+.traffic { display: flex; gap: 12px; padding: 4px; }
+.traffic span { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; line-height: 1; color: rgba(0,0,0,.5); box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); cursor: default; transition: transform .1s, filter .1s; }
+.traffic span:hover { transform: scale(1.1); filter: brightness(1.08); color: rgba(0,0,0,.8); }
 .traffic .close { background: #ff5f57; }
 .traffic .min { background: #febc2e; }
 .traffic .max { background: #28c840; }

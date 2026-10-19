@@ -20,6 +20,7 @@ type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
   snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean; account_email: string;
 };
+type DraftRow = { id: string; mode: ComposeInit["mode"]; reply_to: string | null; from: string | null; to: string; cc: string; subject: string; html: string; attachments: string[]; updated_at: number };
 type Att = { id: string; name: string; mime: string; size: number; downloaded: boolean };
 type QueueItem = { seq: number; what: string; failed: boolean; tries: number; error: string | null };
 type Detail = Msg & { to_json: string | null; cc_json: string | null; body_html: string | null };
@@ -139,6 +140,14 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const [atts, setAtts] = useState<Att[]>([]);
   const [attBusy, setAttBusy] = useState("");
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [drafts, setDrafts] = useState<DraftRow[]>([]);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const refreshDrafts = () => invoke<DraftRow[]>("list_drafts").then(setDrafts).catch(() => {});
+  const splitAddr = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+  const openDraft = (d: DraftRow) => {
+    setDraftsOpen(false);
+    setCompose({ mode: d.mode, replyTo: d.reply_to ?? undefined, from: d.from ?? undefined, to: splitAddr(d.to), cc: splitAddr(d.cc), subject: d.subject, draftId: d.id, html: d.html, attachments: d.attachments });
+  };
   const [tab, setTab] = useState<RibbonTab>("home");
   const [meetingReq, setMeetingReq] = useState({ teams: true, n: 0 });
   const [prompt, setPrompt] = useState<null | { kind: "new" | "sub" | "rename" }>(null);
@@ -258,6 +267,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   };
 
   useEffect(() => {
+    refreshDrafts();
     loadFolders().then(() => syncNow());
     const un = listen<{ Ok?: SyncReport; Err?: string }>("sync-finished", (e) => {
       if (e.payload.Ok) setStatus(syncStatus(e.payload.Ok));
@@ -442,6 +452,9 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
               <Small icon="flag" label={selected?.is_flagged ? "Clear Flag" : "Flag"} on={!!selected?.is_flagged} disabled={!mailTab || !selected} onClick={() => selected && toggleFlag(selected)} />
             </Stack>
           </Group>
+          <Group label="Drafts">
+            <Big icon="drafts" label={drafts.length ? `Drafts (${drafts.length})` : "Drafts"} onClick={() => { refreshDrafts(); setDraftsOpen(true); }} title="Messages you started but haven't sent" />
+          </Group>
           <Group label="Rules">
             <Big icon="rules" label="Rules" onClick={() => setRulesOpen(true)} title="Automatically move, mark or delete incoming mail" />
           </Group>
@@ -569,8 +582,29 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       </section>
       </>}
       {compose && (
-        <Compose init={compose} accounts={accounts} onClose={() => setCompose(null)}
-          onSent={(queued) => { setCompose(null); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
+        <Compose init={compose} accounts={accounts} onClose={() => { setCompose(null); refreshDrafts(); }}
+          onSent={(queued) => { setCompose(null); refreshDrafts(); flash(queued ? "You're offline – message will send when you reconnect" : "Message sent"); refreshQueue(); }} />
+      )}
+      {draftsOpen && (
+        <div className="sheet-backdrop" onClick={() => setDraftsOpen(false)}>
+          <div className="sheet evsheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-bar"><span /><b>Drafts</b><button onClick={() => setDraftsOpen(false)}>Close</button></div>
+            <div className="evbody">
+              {drafts.length === 0 && <div className="muted">No drafts. When you cancel a message you can save it here to finish later; unsent messages are also saved automatically while you write.</div>}
+              {drafts.map((d) => (
+                <div key={d.id} className="rulecard">
+                  <div className="rulehead"><b>{d.subject || "(no subject)"}</b><span className="muted" style={{ fontSize: 12 }}>{new Date(d.updated_at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span></div>
+                  <div className="muted" style={{ fontSize: 12.5 }}>{d.to ? `To: ${d.to}` : "No recipient yet"}{d.from && multi ? ` · from ${d.from}` : ""}</div>
+                  <div className="rowbtns" style={{ marginTop: 6 }}>
+                    <button className="primary" onClick={() => openDraft(d)}>Open</button>
+                    <button onClick={async () => { if (await ask("Delete this draft?", { title: "Delete draft", kind: "warning" })) { await invoke("delete_draft", { id: d.id }).catch((e) => flash(String(e))); refreshDrafts(); } }}>Delete</button>
+                  </div>
+                </div>
+              ))}
+              <div className="muted" style={{ fontSize: 11.5 }}>Drafts are kept on this computer only; they don't appear in the Drafts folder on the server.</div>
+            </div>
+          </div>
+        </div>
       )}
       {rulesOpen && <Rules accounts={accounts} folders={folders} onClose={() => setRulesOpen(false)} onToast={flash} onAccountsChanged={() => { loadFolders(); }} />}
       {settingsOpen && <Settings accounts={accounts} onClose={() => setSettingsOpen(false)}

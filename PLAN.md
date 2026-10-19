@@ -38,3 +38,8 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Attachment list in the reader, open / save, downloaded on demand and kept offline (Outlook + Gmail)
 - [x] Safe-open: scripts and programs can only be saved
 - [x] Attach files when writing (Outlook draft + upload session for big files; Gmail MIME), forwards keep the original's files
+
+## v1.6 — signatures, drafts, bigger window buttons
+- [x] Signature per account (new, reply, forward; follows the From account)
+- [x] Drafts saved on this computer (autosave, save-on-cancel, Drafts list)
+- [x] Larger minimise / maximise / close buttons

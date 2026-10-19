@@ -13,10 +13,16 @@ export type ComposeInit = {
   quoteHeader?: string;
   /** Account (email) to send from. */
   from?: string;
+  /** Set when reopening a saved draft: its id, the editor's saved HTML and files. */
+  draftId?: string;
+  html?: string;
+  attachments?: string[];
 };
 type Acct = { email: string; display_name: string };
 
 const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+const sigBlock = (text: string) => (text.trim() ? `<div data-sig="1">${esc(text.trim())}</div>` : "");
 const valid = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
 export default function Compose({ init, accounts, onClose, onSent }: { init: ComposeInit; accounts: Acct[]; onClose: () => void; onSent: (queued: boolean) => void }) {
@@ -26,17 +32,69 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   const [subject, setSubject] = useState(init.subject ?? "");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>(init.attachments ?? []);
+  const [draftId, setDraftId] = useState<string | undefined>(init.draftId);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [savedNote, setSavedNote] = useState("");
+  const changed = useRef(false);
   const body = useRef<HTMLDivElement>(null);
+  const touch = () => { changed.current = true; };
 
   useEffect(() => {
-    if (body.current && init.quoteHtml) {
-      body.current.innerHTML =
-        `<p><br></p><p><br></p><hr><p style="color:#888">${init.quoteHeader ?? ""}</p>` +
-        `<blockquote style="margin:0 0 0 8px;padding-left:10px;border-left:3px solid #ccc">${DOMPurify.sanitize(init.quoteHtml, { FORBID_TAGS: ["style", "script"] })}</blockquote>`;
-    }
-    (init.mode === "forward" || !init.to?.length ? document.getElementById("cmp-to") : body.current)?.focus();
+    (async () => {
+      if (body.current) {
+        if (init.html !== undefined) {
+          body.current.innerHTML = init.html; // a saved draft comes back exactly as it was
+        } else {
+          const sig = sigBlock(await invoke<string>("get_signature", { email: from }).catch(() => ""));
+          body.current.innerHTML = init.quoteHtml
+            ? `<p><br></p>${sig}<p><br></p><hr><p style="color:#888">${init.quoteHeader ?? ""}</p>` +
+              `<blockquote style="margin:0 0 0 8px;padding-left:10px;border-left:3px solid #ccc">${DOMPurify.sanitize(init.quoteHtml, { FORBID_TAGS: ["style", "script"] })}</blockquote>`
+            : `<p><br></p>${sig}`;
+        }
+      }
+      (init.mode === "forward" || !init.to?.length ? document.getElementById("cmp-to") : body.current)?.focus();
+    })();
   }, []);
+
+  // Another "From" account means another signature.
+  async function changeFrom(email: string) {
+    setFrom(email);
+    const holder = body.current?.querySelector("[data-sig]");
+    if (holder) {
+      holder.innerHTML = esc((await invoke<string>("get_signature", { email }).catch(() => "")).trim());
+    } else if (body.current && changed.current === false) {
+      const sig = sigBlock(await invoke<string>("get_signature", { email }).catch(() => ""));
+      if (sig) body.current.insertAdjacentHTML("afterbegin", `<p><br></p>${sig}`);
+    }
+  }
+
+  async function saveDraft(quiet = false) {
+    try {
+      const id = await invoke<string>("save_draft", {
+        draft: { id: draftId ?? null, mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to, cc, subject, html: body.current?.innerHTML ?? "", attachments: files },
+      });
+      setDraftId(id);
+      changed.current = false;
+      setSavedNote(quiet ? "Draft saved" : "");
+      return true;
+    } catch (e) { setError(String(e)); return false; }
+  }
+
+  // Saved automatically every 20 seconds while you write.
+  useEffect(() => {
+    const t = setInterval(() => { if (changed.current && !sending) saveDraft(true); }, 20000);
+    return () => clearInterval(t);
+  });
+
+  function requestClose() {
+    if (changed.current) setConfirmClose(true);
+    else onClose();
+  }
+  async function discard() {
+    if (draftId) await invoke("delete_draft", { id: draftId }).catch(() => {});
+    onClose();
+  }
 
   async function send() {
     const toList = split(to), ccList = split(cc);
@@ -49,6 +107,7 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
       const sent = await invoke<boolean>("send_mail", {
         draft: { mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to: toList, cc: ccList, subject, html, attachments: files },
       });
+      if (draftId) await invoke("delete_draft", { id: draftId }).catch(() => {});
       onSent(!sent);
     } catch (e) {
       setError(String(e));
@@ -61,27 +120,28 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   async function attach() {
     const picked = await pickFiles({ multiple: true, title: "Attach files" });
     const list = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    touch();
     setFiles((f) => [...f, ...list.filter((p) => !f.includes(p))]);
   }
 
   return (
-    <div className="sheet-backdrop" onKeyDown={(e) => { if (e.key === "Escape") onClose(); if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}>
+    <div className="sheet-backdrop" onKeyDown={(e) => { if (e.key === "Escape") requestClose(); if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}>
       <div className="sheet">
         <div className="sheet-bar">
-          <button onClick={onClose}>Cancel</button>
+          <button onClick={requestClose}>Cancel</button>
           <b>{subject || "New Message"}</b>
           <button className="primary" onClick={send} disabled={sending}>{sending ? "Sending…" : "Send"}</button>
         </div>
         {accounts.length > 1 && (
           <label className="field"><span>From:</span>
-            <select value={from} onChange={(e) => setFrom(e.target.value)} disabled={!!init.replyTo} title={init.replyTo ? "Replies and forwards are sent from the account that received the message" : undefined}>
+            <select value={from} onChange={(e) => changeFrom(e.target.value)} disabled={!!init.replyTo} title={init.replyTo ? "Replies and forwards are sent from the account that received the message" : undefined}>
               {accounts.map((a) => <option key={a.email} value={a.email}>{a.display_name} &lt;{a.email}&gt;</option>)}
             </select>
           </label>
         )}
-        <label className="field"><span>To:</span><input id="cmp-to" value={to} onChange={(e) => setTo(e.target.value)} /></label>
-        <label className="field"><span>Cc:</span><input value={cc} onChange={(e) => setCc(e.target.value)} /></label>
-        <label className="field"><span>Subject:</span><input value={subject} onChange={(e) => setSubject(e.target.value)} /></label>
+        <label className="field"><span>To:</span><input id="cmp-to" value={to} onChange={(e) => { touch(); setTo(e.target.value); }} /></label>
+        <label className="field"><span>Cc:</span><input value={cc} onChange={(e) => { touch(); setCc(e.target.value); }} /></label>
+        <label className="field"><span>Subject:</span><input value={subject} onChange={(e) => { touch(); setSubject(e.target.value); }} /></label>
         <div className="fmt">
           <button className="icon" onClick={() => cmd("bold")}><b>B</b></button>
           <button className="icon" onClick={() => cmd("italic")}><i>I</i></button>
@@ -94,12 +154,23 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
           <div className="attrow" style={{ padding: "6px 16px" }}>
             {files.map((p) => (
               <span key={p} className="attchip"><span className="attname" style={{ padding: "3px 4px 3px 10px" }}>{nameOf(p)}</span>
-                <button className="attsave" title="Remove" onClick={() => setFiles((f) => f.filter((x) => x !== p))}>✕</button></span>
+                <button className="attsave" title="Remove" onClick={() => { touch(); setFiles((f) => f.filter((x) => x !== p)); }}>✕</button></span>
             ))}
           </div>
         )}
-        <div className="editor" contentEditable ref={body} suppressContentEditableWarning />
+        <div className="editor" contentEditable ref={body} suppressContentEditableWarning onInput={touch} />
+        {savedNote && !confirmClose && <div className="muted" style={{ padding: "0 16px 8px", fontSize: 12 }}>{savedNote}</div>}
         {error && <div className="error" style={{ padding: "0 16px 12px" }}>{error}</div>}
+        {confirmClose && (
+          <div className="notice" style={{ margin: "0 16px 14px" }}>
+            <span>Save this message as a draft?</span>
+            <span className="rowbtns">
+              <button className="primary" onClick={async () => { if (await saveDraft()) onClose(); }}>Save draft</button>
+              <button onClick={discard}>Discard</button>
+              <button onClick={() => setConfirmClose(false)}>Keep editing</button>
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

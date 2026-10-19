@@ -1,4 +1,5 @@
 mod attachments;
+mod drafts;
 mod auth;
 mod calendar;
 mod folders;
@@ -217,6 +218,31 @@ async fn save_attachment(id: String, dest: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
+fn save_draft(draft: drafts::DraftRow) -> CmdResult<String> {
+    drafts::save(draft).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_drafts() -> CmdResult<Vec<drafts::DraftRow>> {
+    drafts::list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_draft(id: String) -> CmdResult<()> {
+    drafts::delete(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_signature(email: String) -> String {
+    drafts::get_signature(&email)
+}
+
+#[tauri::command]
+fn set_signature(email: String, text: String) -> CmdResult<()> {
+    drafts::set_signature(&email, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_rules() -> CmdResult<Vec<rules::RuleView>> {
     rules::list().map_err(|e| e.to_string())
 }
@@ -395,6 +421,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_ready,
             list_accounts,
+            save_draft,
+            list_drafts,
+            delete_draft,
+            get_signature,
+            set_signature,
             list_attachments,
             open_attachment,
             save_attachment,
