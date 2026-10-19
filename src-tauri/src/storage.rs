@@ -115,6 +115,9 @@ fn migrate(conn: &Connection) -> Result<()> {
         // 0 = embedded pictures not fetched yet (checked on the next sync).
         conn.execute_batch("ALTER TABLE messages ADD COLUMN inline_done INTEGER DEFAULT 0")?;
     }
+    if !has("accounts", "provider")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN provider TEXT DEFAULT 'microsoft'")?;
+    }
     if !has("offline_mutation_queue", "failed")? {
         // 1 = the server turned this change down; it stays listed so nothing is lost silently.
         conn.execute_batch(
@@ -244,6 +247,22 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     sync_status TEXT DEFAULT 'SYNCED'
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_events_range ON calendar_events(calendar_id, start_utc, end_utc);
+
+-- Gmail: a message can carry several labels (folders); messages.folder_id is only its primary one.
+CREATE TABLE IF NOT EXISTS message_labels (
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    PRIMARY KEY (message_id, folder_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_labels_folder ON message_labels(folder_id);
+
+-- Per-account sync bookmarks (e.g. Gmail history id).
+CREATE TABLE IF NOT EXISTS account_state (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (account_id, key)
+);
 
 CREATE TABLE IF NOT EXISTS offline_mutation_queue (
     seq_id INTEGER PRIMARY KEY AUTOINCREMENT,

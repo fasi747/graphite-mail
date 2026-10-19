@@ -3,8 +3,9 @@
 # Graphite Mail
 
 A free, open-source, **offline-first Microsoft 365 mail & calendar client for Linux**.
-Built with Tauri (Rust) + React. Uses Microsoft Graph — no IMAP/POP3.
+Built with Tauri (Rust) + React. Uses Microsoft Graph and the Gmail / Google Calendar APIs — no IMAP/POP3.
 
+- Microsoft 365 **and Gmail**, several accounts at once, with an **All Inboxes** view
 - Full offline reading and search of your mailbox
 - Read, flag, move, delete, reply and send while offline — changes sync when you reconnect
 - You choose where your mail data is stored, and can move it safely later (crash-proof, verified copy)

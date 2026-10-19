@@ -4,7 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import DOMPurify from "dompurify";
 import Icon from "./Icon";
 
-export type Cal = { id: string; name: string; color: string; is_primary: boolean; can_edit: boolean; account_email: string };
+export type Cal = { id: string; name: string; color: string; is_primary: boolean; can_edit: boolean; account_email: string; provider?: string };
 type Ev = {
   id: string; calendar_id: string; title: string; description_html: string | null; location: string | null;
   online_meeting_url: string | null; start_utc: number; end_utc: number; is_all_day: boolean;
@@ -209,7 +209,7 @@ function EventDetail({ e, cal, onClose, onRespond, onDelete }: { e: Ev; cal?: Ca
           <div className="muted" style={{ marginTop: 4 }}><i className="caldot" style={{ background: e.color }} />{cal?.name}{e.pending ? " · waiting to sync" : ""}</div>
         </div>
         <div className="evbody">
-          {e.online_meeting_url && <button className="primary" onClick={() => invoke("open_link", { url: e.online_meeting_url! })}>Join Teams meeting</button>}
+          {e.online_meeting_url && <button className="primary" onClick={() => invoke("open_link", { url: e.online_meeting_url! })}>{/meet\.google\.com/.test(e.online_meeting_url) ? "Join Google Meet" : "Join Teams meeting"}</button>}
           {!isOrganizer && (
             <div className="rsvp">
               <span className="muted">{label[e.my_response] ?? e.my_response}</span>
@@ -300,7 +300,7 @@ function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { st
           </label>
           <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
           <input placeholder="Invitees (email addresses)" value={people} onChange={(e) => setPeople(e.target.value)} />
-          <label className="check"><input type="checkbox" checked={teams} onChange={(e) => setTeams(e.target.checked)} /> Teams meeting</label>
+          <label className="check"><input type="checkbox" checked={teams} onChange={(e) => setTeams(e.target.checked)} /> {calendars.find((c) => c.id === calId)?.provider === "google" ? "Google Meet video call" : "Teams meeting"}</label>
           <textarea placeholder="Notes" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
           {err && <div className="error">{err}</div>}
         </div>

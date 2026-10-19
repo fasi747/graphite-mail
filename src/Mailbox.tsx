@@ -338,7 +338,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const newMeeting = (teams: boolean) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1 })); };
   // A message can only be moved within its own account.
   const moveItems = (selected ? buildTree(folders.filter((f) => f.account_email === selected.account_email)) : [])
-    .filter(({ f }) => f.id !== folderId)
+    .filter(({ f }) => f.id !== folderId && !(providerOf(f.account_email) === "google" && (f.well_known === "sentitems" || f.well_known === "drafts")))
     .map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => selected && moveTo(selected, f) }));
   const mailTab = view === "mail";
   const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();

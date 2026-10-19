@@ -47,12 +47,13 @@ fn ensure_account(acc: &auth::Account) -> Result<String> {
             )
             .optional()?
         {
+            db.execute("UPDATE accounts SET provider=?1, display_name=?2 WHERE id=?3", params![acc.provider, acc.display_name, id])?;
             return Ok(id);
         }
         let id = uuid::Uuid::new_v4().to_string();
         db.execute(
-            "INSERT INTO accounts(id,email,display_name,created_at) VALUES(?1,?2,?3,?4)",
-            params![id, acc.email, acc.display_name, now()],
+            "INSERT INTO accounts(id,email,display_name,created_at,provider) VALUES(?1,?2,?3,?4,?5)",
+            params![id, acc.email, acc.display_name, now(), acc.provider],
         )?;
         Ok(id)
     })
@@ -304,7 +305,7 @@ async fn sync_folder_messages(
     Ok(changed)
 }
 
-fn strip_html(html: &str) -> String {
+pub(crate) fn strip_html(html: &str) -> String {
     let mut out = String::with_capacity(html.len() / 2);
     let mut in_tag = false;
     for c in html.chars() {

@@ -1,6 +1,6 @@
 [package]
 name = "graphite-mail"
-version = "1.1.0"
+version = "1.2.0"
 description = "Offline-first Microsoft 365 mail & calendar client for Linux"
 authors = ["Faisal Gillani"]
 edition = "2024"
@@ -37,6 +37,9 @@ libc = "0.2"
 chrono = "0.4.45"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+mail-parser = "0.11.9"
+mail-builder = "1.0.0"
+futures = "0.3.34"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

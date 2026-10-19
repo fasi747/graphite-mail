@@ -187,6 +187,7 @@ pub struct Calendar {
     is_primary: bool,
     can_edit: bool,
     account_email: String,
+    provider: String,
 }
 
 #[derive(Serialize)]
@@ -209,7 +210,7 @@ pub struct Event {
 
 pub fn calendars() -> Result<Vec<Calendar>> {
     storage::with_db(|db| {
-        let mut st = db.prepare("SELECT c.id,c.name,c.color_hex,c.is_primary,c.can_edit,a.email FROM calendars c JOIN accounts a ON a.id=c.account_id ORDER BY a.created_at, c.is_primary DESC, c.name")?;
+        let mut st = db.prepare("SELECT c.id,c.name,c.color_hex,c.is_primary,c.can_edit,a.email,COALESCE(a.provider,'microsoft') FROM calendars c JOIN accounts a ON a.id=c.account_id ORDER BY a.created_at, c.is_primary DESC, c.name")?;
         let rows = st.query_map([], |r| {
             Ok(Calendar {
                 id: r.get(0)?,
@@ -218,6 +219,7 @@ pub fn calendars() -> Result<Vec<Calendar>> {
                 is_primary: r.get(3)?,
                 can_edit: r.get(4)?,
                 account_email: r.get(5)?,
+                provider: r.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -316,10 +318,10 @@ pub fn create(e: NewEvent) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
     storage::with_db(|db| {
         let tx = db.unchecked_transaction()?;
-        let cal_remote: String = tx.query_row(
-            "SELECT remote_id FROM calendars WHERE id=?1",
+        let (cal_remote, provider): (String, String) = tx.query_row(
+            "SELECT c.remote_id, COALESCE(a.provider,'microsoft') FROM calendars c JOIN accounts a ON a.id=c.account_id WHERE c.id=?1",
             [&e.calendar_id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         let attendees: Vec<Value> = e
             .attendees
@@ -338,25 +340,22 @@ pub fn create(e: NewEvent) -> Result<String> {
                 .format("%Y-%m-%dT%H:%M:%S")
                 .to_string()
         };
-        enqueue(
-            &tx,
-            &id,
-            "CREATE_EVENT",
+        let event = if provider == "google" {
+            crate::google::new_event_payload(&e.title, e.start_utc, e.end_utc, e.is_all_day, e.location.as_deref(), e.body.as_deref(), &e.attendees, e.online_meeting)
+        } else {
             json!({
-                "calendar": cal_remote,
-                "event": {
-                    "subject": e.title,
-                    "body": { "contentType": "HTML", "content": e.body.clone().unwrap_or_default() },
-                    "start": { "dateTime": fmt(e.start_utc), "timeZone": "UTC" },
-                    "end": { "dateTime": fmt(e.end_utc), "timeZone": "UTC" },
-                    "isAllDay": e.is_all_day,
-                    "location": { "displayName": e.location.clone().unwrap_or_default() },
-                    "attendees": e.attendees.iter().map(|a| json!({ "emailAddress": { "address": a }, "type": "required" })).collect::<Vec<_>>(),
-                    "isOnlineMeeting": e.online_meeting,
-                    "onlineMeetingProvider": if e.online_meeting { "teamsForBusiness" } else { "unknown" },
-                }
-            }),
-        )?;
+                "subject": e.title,
+                "body": { "contentType": "HTML", "content": e.body.clone().unwrap_or_default() },
+                "start": { "dateTime": fmt(e.start_utc), "timeZone": "UTC" },
+                "end": { "dateTime": fmt(e.end_utc), "timeZone": "UTC" },
+                "isAllDay": e.is_all_day,
+                "location": { "displayName": e.location.clone().unwrap_or_default() },
+                "attendees": e.attendees.iter().map(|a| json!({ "emailAddress": { "address": a }, "type": "required" })).collect::<Vec<_>>(),
+                "isOnlineMeeting": e.online_meeting,
+                "onlineMeetingProvider": if e.online_meeting { "teamsForBusiness" } else { "unknown" },
+            })
+        };
+        enqueue(&tx, &id, "CREATE_EVENT", json!({ "calendar": cal_remote, "event": event }))?;
         tx.commit()?;
         Ok(id)
     })

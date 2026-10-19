@@ -83,6 +83,18 @@ export default function App() {
     }
   }
 
+  async function signInGoogle() {
+    setBusy(true);
+    setError("");
+    try {
+      setAccount(await invoke<Account>("add_google_account"));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function signOut() {
     await invoke("sign_out");
     setAccount(null);
@@ -95,10 +107,13 @@ export default function App() {
   return (
     <Onboard>
       <h1>Graphite Mail</h1>
-      <p className="muted">Offline-first mail &amp; calendar for Microsoft 365.</p>
-      <button className="primary" onClick={signIn} disabled={busy}>
-        {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
-      </button>
+      <p className="muted">Offline-first mail &amp; calendar for Microsoft 365 and Gmail.</p>
+      <div className="row" style={{ justifyContent: "center" }}>
+        <button className="primary" onClick={signIn} disabled={busy}>
+          {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
+        </button>
+        <button onClick={signInGoogle} disabled={busy}>Sign in with Google</button>
+      </div>
       {busy && <p className="muted">Finish signing in in your web browser, then come back here.</p>}
       {error && <p className="error">{error}</p>}
     </Onboard>

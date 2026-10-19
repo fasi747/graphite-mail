@@ -120,7 +120,7 @@ pub fn store_refresh_token(email: &str, rt: &str) -> Result<()> {
     Ok(entry(&rt_key(email))?.set_password(rt)?)
 }
 
-fn b64(bytes: &[u8]) -> String {
+pub(crate) fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -174,7 +174,7 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
     Ok(account)
 }
 
-async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
+pub(crate) async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
     loop {
         let (mut sock, _) = listener.accept().await?;
         let mut buf = vec![0u8; 8192];

@@ -92,11 +92,25 @@ pub fn move_to(id: &str, folder_id: &str) -> Result<()> {
                 [folder_id],
             )?;
         }
+        let (source_remote, source_id, dest_kind): (Option<String>, Option<String>, Option<String>) = tx.query_row(
+            "SELECT (SELECT remote_id FROM folders WHERE id=m.folder_id), m.folder_id, (SELECT well_known_name FROM folders WHERE id=?1) FROM messages m WHERE m.id=?2",
+            params![folder_id, id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
         tx.execute(
             "UPDATE messages SET folder_id=?1, sync_status='DIRTY_LOCAL' WHERE id=?2",
             params![folder_id, id],
         )?;
-        enqueue(&tx, id, "MOVE", json!({ "destination": remote_folder }))?;
+        // Gmail: a message listed under several labels leaves the ones a move takes it out of (all of them for Trash/Spam).
+        if matches!(dest_kind.as_deref(), Some("deleteditems" | "junkemail")) {
+            tx.execute("DELETE FROM message_labels WHERE message_id=?1", [id])?;
+        } else {
+            tx.execute(
+                "DELETE FROM message_labels WHERE message_id=?1 AND (folder_id=?2 OR folder_id IN (SELECT id FROM folders WHERE well_known_name IN ('inbox','junkemail')))",
+                params![id, source_id],
+            )?;
+        }
+        enqueue(&tx, id, "MOVE", json!({ "destination": remote_folder, "source": source_remote }))?;
         tx.commit()?;
         Ok(())
     })
@@ -282,6 +296,7 @@ fn graph_base() -> String {
 static REPLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct Item {
+    google: bool,
     email: Option<String>,
     seq: i64,
     entity: String,
@@ -332,13 +347,14 @@ pub async fn replay() -> Result<usize> {
     storage::with_db(coalesce)?;
     let items: Vec<Item> = storage::with_db(|db| {
         let mut st = db.prepare(
-            "SELECT q.seq_id, q.local_entity_id, q.operation, q.payload_json, a.email
+            "SELECT q.seq_id, q.local_entity_id, q.operation, q.payload_json, a.email, COALESCE(a.provider,'microsoft')
              FROM offline_mutation_queue q LEFT JOIN accounts a ON a.id=q.account_id
              WHERE q.failed=0 AND q.next_retry_at <= ?1 ORDER BY q.seq_id",
         )?;
         let rows = st.query_map([now()], |r| {
             Ok(Item {
                 email: r.get(4)?,
+                google: r.get::<_, String>(5)? == "google",
                 seq: r.get(0)?,
                 entity: r.get(1)?,
                 op: r.get(2)?,
@@ -363,7 +379,11 @@ pub async fn replay() -> Result<usize> {
         let rid = rid.or_else(|| it.payload["remote_id"].as_str().map(String::from));
         let p = &it.payload;
         use reqwest::Method;
-        let result = auth::in_account(it.email.clone(), async { match (it.op.as_str(), &rid) {
+        let result = auth::in_account(it.email.clone(), async {
+          if it.google {
+              return crate::google::apply(&it.op, &it.entity, rid.as_deref(), p).await;
+          }
+          match (it.op.as_str(), &rid) {
             ("SET_READ", Some(r)) => {
                 call(
                     Method::PATCH,
@@ -630,7 +650,7 @@ mod tests {
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
         storage::with_db(|db| {
             db.execute_batch(
-                "INSERT INTO accounts VALUES('a','me@x.com','Me',0);
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','me@x.com','Me',0);
                  INSERT INTO folders(id,account_id,remote_id,display_name) VALUES('f','a','rf','Inbox');
                  INSERT INTO messages(id,account_id,folder_id,remote_id,received_at) VALUES('m1','a','f','r1',1),('m2','a','f','r2',2);",
             )?;
@@ -728,7 +748,7 @@ mod tests {
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
         storage::with_db(|db| {
             db.execute_batch(
-                "INSERT INTO accounts VALUES('a','work@x.com','Work',1),('b','home@y.com','Home',2);
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','work@x.com','Work',1),('b','home@y.com','Home',2);
                  INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('fa','a','ra','Inbox','inbox'),('fb','b','INBOX','Inbox','inbox'),('fb2','b','L1','Family',NULL);
                  INSERT INTO messages(id,account_id,folder_id,remote_id,received_at) VALUES('ma','a','fa','r1',1),('mb','b','fb','g1',2);",
             )?;

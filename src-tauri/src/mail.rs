@@ -14,13 +14,13 @@ pub struct Folder {
     well_known: Option<String>,
     unread: i64,
     total: i64,
-    account_email: String,
+    pub(crate) account_email: String,
 }
 
 #[derive(Serialize)]
 pub struct MessageRow {
     id: String,
-    subject: Option<String>,
+    pub(crate) subject: Option<String>,
     sender_name: Option<String>,
     sender_address: Option<String>,
     snippet: Option<String>,
@@ -88,7 +88,8 @@ pub fn messages(folder_id: &str, offset: i64, limit: i64) -> Result<Vec<MessageR
         let filter = if folder_id == "all-inboxes" {
             "m.folder_id IN (SELECT id FROM folders WHERE well_known_name='inbox' AND ?1 IS NOT NULL)"
         } else {
-            "m.folder_id=?1"
+            // primary folder, or (Gmail) any of the message's labels
+            "(m.folder_id=?1 OR m.id IN (SELECT message_id FROM message_labels WHERE folder_id=?1))"
         };
         let mut st = db.prepare(&format!(
             "SELECT {ROW_COLS} FROM {ROW_FROM} WHERE {filter} ORDER BY m.received_at DESC LIMIT ?2 OFFSET ?3"
@@ -203,7 +204,7 @@ mod tests {
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
         storage::with_db(|db| {
             db.execute_batch(
-                "INSERT INTO accounts VALUES('a','me@x.com','Me',0);
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','me@x.com','Me',0);
                  INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('f','a','rf','Inbox','inbox');
                  INSERT INTO messages(id,account_id,folder_id,remote_id,subject,sender_name,received_at) VALUES('m1','a','f','r1','Budget review','Asim',100);
                  INSERT INTO messages(id,account_id,folder_id,remote_id,subject,sender_name,received_at) VALUES('m2','a','f','r2','Lunch','Bob',200);
@@ -228,7 +229,7 @@ mod tests {
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
         storage::with_db(|db| {
             db.execute_batch(
-                "INSERT INTO accounts VALUES('a1','work@x.com','Work',1),('a2','home@y.com','Home',2);
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a1','work@x.com','Work',1),('a2','home@y.com','Home',2);
                  INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('i1','a1','r1','Inbox','inbox'),('i2','a2','r2','Inbox','inbox'),('p2','a2','r3','Projects',NULL);
                  INSERT INTO messages(id,account_id,folder_id,remote_id,subject,received_at) VALUES
                    ('w','a1','i1','m1','Work mail',100),('h','a2','i2','m2','Home mail',200),('x','a2','p2','m3','Elsewhere',300);",

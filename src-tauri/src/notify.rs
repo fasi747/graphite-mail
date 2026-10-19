@@ -99,7 +99,7 @@ mod tests {
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
         storage::with_db(|db| {
             db.execute_batch(
-                "INSERT INTO accounts VALUES('a','me@x.com','Me',0);
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','me@x.com','Me',0);
                  INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('in','a','rin','Inbox','inbox');
                  INSERT INTO folders(id,account_id,remote_id,display_name) VALUES('p','a','rp','Projects');
                  INSERT INTO messages(id,account_id,folder_id,remote_id,subject,sender_name,received_at) VALUES('old','a','in','r1','Old','Ann',100);",

@@ -436,7 +436,7 @@ mod tests {
         crate::sync::write_blob(&vec![7u8; 3_000_000], "bin").unwrap();
         storage::with_db(|db| {
             db.execute_batch(&format!(
-                "INSERT INTO accounts VALUES('a','me@x.com','Me',0);
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','me@x.com','Me',0);
                  INSERT INTO folders(id,account_id,remote_id,display_name) VALUES('f','a','rf','Inbox');
                  INSERT INTO messages(id,account_id,folder_id,remote_id,subject,received_at,body_blob_hash,body_cached) VALUES('m1','a','f','r1','Budget',1,'{hash}',1);"
             ))?;

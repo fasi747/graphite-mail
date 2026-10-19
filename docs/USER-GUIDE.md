@@ -30,6 +30,26 @@ chmod +x graphite-mail_<version>_amd64.AppImage
    Your sign-in is kept in your system keyring (GNOME Keyring or KDE Wallet), never in a plain file.
 3. The first sync downloads your mail. Large mailboxes take a while; you can already read what has arrived.
 
+## Several accounts (Microsoft 365 and Gmail)
+
+You can use more than one account at the same time.
+
+- **Add an account:** gear → **Add Microsoft account** or **Add Google account**. Your browser opens; sign in and come back.
+- **The sidebar** has one section per account (name and email on top, its folders below; click the header to fold it).
+  With two or more accounts, **All Inboxes** at the top shows every account's Inbox together. A small coloured dot tells you which account a message belongs to.
+- **Writing:** the **From** line lets you choose the account. Replies and forwards always go out from the account that received the message.
+- **New Folder** asks which account it belongs to. A message can only be moved to a folder of its own account.
+- **Remove an account:** gear → **Remove** next to it. Its downloaded mail and calendar are deleted from this computer; nothing is deleted on the server.
+
+### Gmail specifics
+
+- Gmail has **labels** instead of folders. A label shows as a folder; a message can have several labels and appears under each of them.
+  **Archive** shows mail that is in no other folder ("All Mail" without the Inbox). Moving a message into a label also takes it out of the Inbox.
+- The first sync downloads the last 90 days (up to 3000 messages); after that only changes are fetched.
+- **Star** is the Flag button. Delete sends mail to Trash; Gmail empties its Trash by itself after 30 days (Graphite Mail does not erase mail for good).
+- Forwarding does not include the original attachments (Gmail doesn't do that for apps).
+- Google Calendar works like the Microsoft calendar; **Google Meet video call** adds a Meet link to a new event.
+
 ## Everyday use
 
 | To do this | Do this |
