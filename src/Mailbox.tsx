@@ -11,6 +11,9 @@ import Settings from "./Settings";
 import Rules from "./Rules";
 import { Ribbon, RibbonTab, Group, Big, Small, Stack, BigMenu, NamePrompt } from "./Ribbon";
 import { ask, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ContextMenu, FolderPicker, MenuItem, QuickRule, RuleDialog } from "./ContextMenu";
+import { Selection, bulkFlag, bulkRead, clickSelect, prune, selectAll, single } from "./selection";
+import { THEMES, ThemeChoice, applyTheme, cachedChoice, isChoice, isDark, resolveTheme } from "./theme";
 
 type Account = { email: string; display_name: string; provider?: string; rules?: boolean };
 const ALL = "all-inboxes";
@@ -128,9 +131,15 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const [status, setStatus] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [allowRemote, setAllowRemote] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    (localStorage.getItem("theme") as "light" | "dark") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"),
-  );
+  const [themeChoice, setThemeChoice] = useState<ThemeChoice>(cachedChoice);
+  const [sysDark, setSysDark] = useState(() => matchMedia("(prefers-color-scheme: dark)").matches);
+  const dark = isDark(resolveTheme(themeChoice, sysDark));
+  const [sel, setSel] = useState<Selection>({ ids: new Set(), anchor: null });
+  const [ctx, setCtx] = useState<null | { x: number; y: number }>(null);
+  const [picker, setPicker] = useState<null | "move" | "copy">(null);
+  const [ruleInit, setRuleInit] = useState<null | { rule: QuickRule; account: string }>(null);
+  const [ruleBusy, setRuleBusy] = useState(false);
+  const [ruleErr, setRuleErr] = useState("");
   const [darkMail, setDarkMail] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
   const [compose, setCompose] = useState<ComposeInit | null>(null);
@@ -164,10 +173,15 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const viewRef = useRef({ folderId: null as string | null, query: "" });
   viewRef.current = { folderId, query };
 
+  useEffect(() => { applyTheme(themeChoice); }, [themeChoice, sysDark]);
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem("theme", theme); } catch { /* ignore */ }
-  }, [theme]);
+    invoke<string>("get_theme").then((t) => isChoice(t) && setThemeChoice(t)).catch(() => {});
+    const mq = matchMedia("(prefers-color-scheme: dark)");
+    const on = () => setSysDark(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const chooseTheme = (t: ThemeChoice) => { setThemeChoice(t); invoke("set_theme", { theme: t }).catch((e) => flash(String(e))); };
 
   const loadFolders = async () => {
     loadCals();
@@ -195,24 +209,98 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     setMsgs((ms) => ms.map((m) => (m.id === id ? { ...m, ...p } : m)));
     setSelected((s) => (s && s.id === id ? { ...s, ...p } : s));
   };
-  const removeFromList = (id: string) => {
-    const idx = msgs.findIndex((m) => m.id === id);
-    const next = msgs[idx + 1] ?? msgs[idx - 1];
-    setMsgs((ms) => ms.filter((m) => m.id !== id));
-    if (next) open(next); else setSelected(null);
+  /** Takes messages out of the list; when the open one goes, the next one opens. */
+  const removeMany = (ids: string[]) => {
+    if (!ids.length) return;
+    const gone = new Set(ids);
+    const idx = msgs.findIndex((m) => gone.has(m.id));
+    const rest = msgs.filter((m) => !gone.has(m.id));
+    setMsgs(rest);
+    if (selected && !gone.has(selected.id)) return;
+    const next = rest[idx] ?? rest[idx - 1];
+    if (next) open(next); else { setSelected(null); setSel({ ids: new Set(), anchor: null }); }
   };
-  const act = async (fn: () => Promise<unknown>, after?: () => void) => {
-    try { await fn(); after?.(); loadFolders(); refreshQueue(); }
-    catch (e) { flash(String(e)); }
+  /** Runs one queued action per message (each goes through the offline outbox); returns the ids that worked. */
+  const runAll = async (list: Msg[], fn: (m: Msg) => Promise<unknown>) => {
+    const done: string[] = [];
+    let err = "";
+    for (const m of list) {
+      try { await fn(m); done.push(m.id); } catch (e) { err = String(e); }
+    }
+    loadFolders(); refreshQueue();
+    if (err) flash(list.length > 1 ? `${list.length - done.length} of ${list.length} couldn't be changed: ${err}` : err);
+    return done;
   };
-  const toggleRead = (m: Msg) => act(() => invoke("set_read", { id: m.id, read: !m.is_read }), () => patch(m.id, { is_read: !m.is_read }));
-  const toggleFlag = (m: Msg) => act(() => invoke("set_flag", { id: m.id, flagged: !m.is_flagged }), () => patch(m.id, { is_flagged: !m.is_flagged }));
-  const del = async (m: Msg) => {
+  const n = (k: number) => (k === 1 ? "1 message" : `${k} messages`);
+  const markRead = (list: Msg[]) => {
+    const read = bulkRead(list);
+    return runAll(list.filter((m) => m.is_read !== read), (m) => invoke("set_read", { id: m.id, read }).then(() => patch(m.id, { is_read: read })));
+  };
+  const markFlag = (list: Msg[]) => {
+    const flagged = bulkFlag(list);
+    return runAll(list.filter((m) => m.is_flagged !== flagged), (m) => invoke("set_flag", { id: m.id, flagged }).then(() => patch(m.id, { is_flagged: flagged })));
+  };
+  const del = async (list: Msg[]) => {
+    if (!list.length) return;
     const inTrash = folders.find((f) => f.id === folderId)?.well_known === "deleteditems";
-    if (inTrash && !(await ask("Permanently delete this message? This can't be undone.", { title: "Delete message", kind: "warning" }))) return;
-    act(() => invoke("delete_message", { id: m.id }), () => removeFromList(m.id));
+    if (inTrash && !(await ask(`Permanently delete ${list.length === 1 ? "this message" : `these ${list.length} messages`}? This can't be undone.`, { title: "Delete", kind: "warning" }))) return;
+    removeMany(await runAll(list, (m) => invoke("delete_message", { id: m.id })));
   };
-  const moveTo = (m: Msg, f: Folder) => { setMoveOpen(false); act(() => invoke("move_message", { id: m.id, folderId: f.id }), () => { removeFromList(m.id); flash(`Moved to ${f.name}`); }); };
+  const moveTo = async (list: Msg[], f: Folder) => {
+    setMoveOpen(false);
+    const done = await runAll(list, (m) => invoke("move_message", { id: m.id, folderId: f.id }));
+    removeMany(done);
+    if (done.length) flash(`Moved ${list.length > 1 ? `${n(done.length)} ` : ""}to ${f.name}`);
+  };
+  const copyTo = async (list: Msg[], f: Folder) => {
+    const done = await runAll(list, (m) => invoke("copy_message", { id: m.id, folderId: f.id }));
+    if (done.length) flash(`Copied ${list.length > 1 ? `${n(done.length)} ` : ""}to ${f.name}`);
+  };
+  const markSpam = async (list: Msg[]) => {
+    const done = await runAll(list, (m) => invoke("mark_spam", { id: m.id }));
+    removeMany(done);
+    if (done.length) flash(`${n(done.length)} moved to Junk`);
+  };
+  /** Rules and blocking need an extra permission (mailbox settings / Gmail filters): ask for it once, then retry. */
+  const withRulesPermission = async <T,>(email: string, fn: () => Promise<T>): Promise<T> => {
+    try { return await fn(); } catch (e) {
+      if (!/extra permission/i.test(String(e))) throw e;
+      const gmail = providerOf(email) === "google";
+      if (!(await ask(`Rules and blocking need one extra permission for ${email} (${gmail ? "managing Gmail filters" : "managing mailbox settings"}). Open the browser to allow it?`, { title: "Permission needed", kind: "info", okLabel: "Allow", cancelLabel: "Cancel" }))) throw new Error("Nothing was changed.");
+      await invoke("enable_rules", { email });
+      await loadFolders();
+      return await fn();
+    }
+  };
+  /** Blocks each sender once (future mail goes to Junk / Spam) and moves these messages there too. */
+  const blockSenders = async (list: Msg[]) => {
+    const firstPer = new Map<string, Msg>();
+    for (const m of list) if (m.sender_address) firstPer.set(`${m.account_email}\n${m.sender_address.toLowerCase()}`, m);
+    if (!firstPer.size) return flash("There is no sender address to block.");
+    const who = [...new Set([...firstPer.values()].map((m) => m.sender_address))];
+    if (!(await ask(`Block ${who.length === 1 ? who[0] : `${who.length} senders`}? Their future mail goes to Junk, and ${list.length === 1 ? "this message moves" : "these messages move"} there now.`, { title: "Block sender", kind: "warning", okLabel: "Block", cancelLabel: "Cancel" }))) return;
+    const blocked: string[] = [];
+    for (const m of firstPer.values()) {
+      try { blocked.push(await withRulesPermission(m.account_email, () => invoke<string>("block_sender", { id: m.id }))); }
+      catch (e) { flash(String(e)); }
+    }
+    if (!blocked.length) return;
+    const hit = new Set(blocked.map((b) => b.toLowerCase()));
+    removeMany(await runAll(list.filter((m) => m.sender_address && hit.has(m.sender_address.toLowerCase())), (m) => invoke("mark_spam", { id: m.id })));
+    flash(`Blocked ${blocked.length === 1 ? blocked[0] : `${blocked.length} senders`}`);
+  };
+  const saveQuickRule = async (r: QuickRule) => {
+    if (!ruleInit) return;
+    const account = ruleInit.account;
+    setRuleBusy(true); setRuleErr("");
+    const rule = { id: null, account, name: "", enabled: true, from: r.field === "from" ? r.text : "", subject: r.field === "subject" ? r.text : "", to: "", body: "",
+      move_to: r.action === "move" ? r.folder : null, mark_read: r.action === "read", flag: false, delete: r.action === "delete" };
+    try {
+      await withRulesPermission(account, () => invoke("save_rule", { rule }));
+      setRuleInit(null);
+      flash("Rule created");
+    } catch (e) { setRuleErr(String(e)); } finally { setRuleBusy(false); }
+  };
 
   const addrs = (json: string | null) => { try { return (JSON.parse(json || "[]") as { address?: string }[]).map((p) => p.address!).filter(Boolean); } catch { return []; } };
   /** The account a brand-new message should come from: the folder you're in, else the open message's account. */
@@ -237,16 +325,24 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (compose || t.tagName === "INPUT" || t.isContentEditable) return;
+      if (ctx || picker || ruleInit || settingsOpen || rulesOpen || prompt || t.tagName === "SELECT" || t.tagName === "TEXTAREA") return;
       const idx = selected ? msgs.findIndex((m) => m.id === selected.id) : -1;
-      if (e.key === "ArrowDown" && msgs[idx + 1]) { e.preventDefault(); open(msgs[idx + 1]); }
+      if (view === "mail" && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && msgs.length) { e.preventDefault(); setSel(selectAll(msgs.map((m) => m.id))); }
+      else if (e.key === "Escape" && sel.ids.size > 1) setSel(selected ? single(selected.id) : { ids: new Set(), anchor: null });
+      else if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && targets.length) {
+        e.preventDefault();
+        const r = document.querySelector(".msg.active")?.getBoundingClientRect();
+        setCtx({ x: r ? r.left + 40 : 300, y: r ? r.top + r.height / 2 : 200 });
+      }
+      else if (e.key === "ArrowDown" && msgs[idx + 1]) { e.preventDefault(); open(msgs[idx + 1]); }
       else if (e.key === "ArrowUp" && idx > 0) { e.preventDefault(); open(msgs[idx - 1]); }
-      else if (!selected) { if ((e.ctrlKey || e.metaKey) && e.key === "n") newMail(); }
-      else if (e.key === "Delete") del(selected);
+      else if (e.key === "Delete" && targets.length) del(targets);
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "u" && targets.length) markRead(targets);
+      else if (!selected || multiSel) { if ((e.ctrlKey || e.metaKey) && e.key === "n") newMail(); }
       else if ((e.ctrlKey || e.metaKey) && e.key === "n") newMail();
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "r") startCompose("replyAll");
       else if ((e.ctrlKey || e.metaKey) && e.key === "r") { e.preventDefault(); startCompose("reply"); }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") startCompose("forward");
-      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "u") toggleRead(selected);
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -285,9 +381,12 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   }, []);
 
   useEffect(() => {
+    setSel({ ids: new Set(), anchor: null });
     const t = setTimeout(loadMessages, query ? 150 : 0);
     return () => clearTimeout(t);
   }, [folderId, query]);
+
+  useEffect(() => { setSel((s) => prune(msgs.map((m) => m.id), s)); }, [msgs]);
 
   const loadMore = async () => {
     if (query.trim() || !folderId || msgs.length % PAGE !== 0 || msgs.length === 0) return;
@@ -305,6 +404,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const open = async (m: Msg) => {
     setAllowRemote(false);
     setMoveOpen(false);
+    setSel(single(m.id));
     const d = await invoke<Detail>("get_message", { id: m.id });
     setSelected(d);
     setAtts([]);
@@ -315,8 +415,8 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   };
 
   const rendered = useMemo(
-    () => (selected?.body_html ? buildDoc(selected.body_html, allowRemote, theme === "dark" && darkMail) : null),
-    [selected, allowRemote, theme, darkMail],
+    () => (selected?.body_html ? buildDoc(selected.body_html, allowRemote, dark && darkMail) : null),
+    [selected, allowRemote, dark, darkMail],
   );
 
   const current = folders.find((f) => f.id === folderId);
@@ -352,11 +452,40 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     } catch (e) { flash(String(e)); }
   };
   const archiveFolder = folders.find((f) => f.well_known === "archive" && f.account_email === selected?.account_email);
+  // What the ribbon, keyboard and right-click act on: the selected messages, else the open one.
+  const listed = msgs.filter((m) => sel.ids.has(m.id));
+  const targets: Msg[] = listed.length ? listed : selected ? [selected] : [];
+  const multiSel = targets.length > 1;
+  const one = targets.length === 1 && selected?.id === targets[0].id;
+  // Moving and copying stay within one account.
+  const tAcct = targets.length && targets.every((m) => m.account_email === targets[0].account_email) ? targets[0].account_email : null;
+  const folderChoices = (kind: "move" | "copy") => (tAcct ? buildTree(folders.filter((f) => f.account_email === tAcct)) : [])
+    .filter(({ f }) => f.id !== folderId && !(providerOf(f.account_email) === "google" && (f.well_known === "sentitems" || f.well_known === "drafts"))
+      && !(kind === "copy" && ["deleteditems", "junkemail", "sentitems", "drafts"].includes(f.well_known ?? "")));
+  const inJunk = current?.well_known === "junkemail";
+  const markReadLabel = bulkRead(targets) ? "Mark Read" : "Mark Unread";
+  const flagLabel = bulkFlag(targets) ? "Flag" : "Clear Flag";
+  const openRuleDialog = () => {
+    const m = targets[0];
+    setRuleErr("");
+    setRuleInit({ account: m.account_email, rule: { field: "from", text: m.sender_address ?? "", action: "move", folder: "" } });
+  };
+  const ctxItems: MenuItem[] = [
+    { label: "Reply", icon: "reply", onClick: () => startCompose("reply"), disabled: !one },
+    { label: "Reply All", icon: "replyall", onClick: () => startCompose("replyAll"), disabled: !one },
+    { label: "Forward", icon: "forward", onClick: () => startCompose("forward"), disabled: !one },
+    { label: multiSel ? `Delete ${targets.length}` : "Delete", icon: "trash", onClick: () => del(targets), separator: true },
+    { label: "Move to…", icon: "move", onClick: () => setPicker("move"), disabled: !tAcct },
+    { label: "Copy to…", icon: "copy", onClick: () => setPicker("copy"), disabled: !tAcct },
+    { label: markReadLabel, icon: bulkRead(targets) ? "read" : "unread", onClick: () => markRead(targets), separator: true },
+    { label: flagLabel, icon: "flag", onClick: () => markFlag(targets) },
+    { label: "Create rule…", icon: "rules", onClick: openRuleDialog, disabled: targets.length !== 1, separator: true },
+    { label: "Block sender", icon: "block", onClick: () => blockSenders(targets), disabled: !targets.some((m) => m.sender_address) },
+    { label: "Mark as spam", icon: "junkemail", onClick: () => markSpam(targets), disabled: inJunk },
+  ];
   const newMeeting = (teams: boolean) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1 })); };
   // A message can only be moved within its own account.
-  const moveItems = (selected ? buildTree(folders.filter((f) => f.account_email === selected.account_email)) : [])
-    .filter(({ f }) => f.id !== folderId && !(providerOf(f.account_email) === "google" && (f.well_known === "sentitems" || f.well_known === "drafts")))
-    .map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => selected && moveTo(selected, f) }));
+  const moveItems = folderChoices("move").map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => moveTo(targets, f) }));
   const mailTab = view === "mail";
   const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
@@ -433,21 +562,21 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
             <Stack><Small icon="calendar" label="New Event" onClick={() => newMeeting(false)} /></Stack>
           </Group>
           <Group label="Delete">
-            <Big icon="trash" label="Delete" disabled={!mailTab || !selected} onClick={() => selected && del(selected)} title="Delete (Del)" />
-            <Big icon="archive" label="Archive" disabled={!mailTab || !selected || !archiveFolder || folderId === archiveFolder.id} onClick={() => selected && archiveFolder && moveTo(selected, archiveFolder)} />
+            <Big icon="trash" label={multiSel ? `Delete (${targets.length})` : "Delete"} disabled={!mailTab || !targets.length} onClick={() => del(targets)} title="Delete (Del)" />
+            <Big icon="archive" label="Archive" disabled={!mailTab || multiSel || !selected || !archiveFolder || folderId === archiveFolder.id} onClick={() => selected && archiveFolder && moveTo([selected], archiveFolder)} />
           </Group>
           <Group label="Respond">
-            <Big icon="reply" label="Reply" disabled={!mailTab || !selected} onClick={() => startCompose("reply")} title="Reply (Ctrl+R)" />
-            <Big icon="replyall" label="Reply All" disabled={!mailTab || !selected} onClick={() => startCompose("replyAll")} title="Reply all (Ctrl+Shift+R)" />
-            <Big icon="forward" label="Forward" disabled={!mailTab || !selected} onClick={() => startCompose("forward")} title="Forward (Ctrl+Shift+F)" />
+            <Big icon="reply" label="Reply" disabled={!mailTab || !one} onClick={() => startCompose("reply")} title="Reply (Ctrl+R)" />
+            <Big icon="replyall" label="Reply All" disabled={!mailTab || !one} onClick={() => startCompose("replyAll")} title="Reply all (Ctrl+Shift+R)" />
+            <Big icon="forward" label="Forward" disabled={!mailTab || !one} onClick={() => startCompose("forward")} title="Forward (Ctrl+Shift+F)" />
           </Group>
           <Group label="Move">
-            <BigMenu icon="move" label="Move" disabled={!mailTab || !selected} items={moveItems} />
+            <BigMenu icon="move" label={multiSel ? `Move (${targets.length})` : "Move"} disabled={!mailTab || !tAcct} items={moveItems} />
           </Group>
           <Group label="Tags">
             <Stack>
-              <Small icon={selected?.is_read ? "unread" : "read"} label={selected?.is_read ? "Mark Unread" : "Mark Read"} disabled={!mailTab || !selected} onClick={() => selected && toggleRead(selected)} />
-              <Small icon="flag" label={selected?.is_flagged ? "Clear Flag" : "Flag"} on={!!selected?.is_flagged} disabled={!mailTab || !selected} onClick={() => selected && toggleFlag(selected)} />
+              <Small icon={bulkRead(targets) ? "read" : "unread"} label={markReadLabel} disabled={!mailTab || !targets.length} onClick={() => markRead(targets)} />
+              <Small icon="flag" label={flagLabel} on={!!targets.length && !bulkFlag(targets)} disabled={!mailTab || !targets.length} onClick={() => markFlag(targets)} />
             </Stack>
           </Group>
           <Group label="Drafts">
@@ -479,12 +608,11 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
             <Big icon="calendar" label="Calendar" onClick={() => setView("calendar")} accent={view === "calendar"} />
           </Group>
           <Group label="Appearance">
+            <BigMenu icon="appearance" label="Theme" items={[{ id: "system" as ThemeChoice, label: "Match system" }, ...THEMES].map((t) => ({
+              label: `${themeChoice === t.id ? "✓ " : ""}${t.label}`, onClick: () => chooseTheme(t.id),
+            }))} />
             <Stack>
-              <Small icon="sun" label="Light" on={theme === "light"} onClick={() => setTheme("light")} />
-              <Small icon="moon" label="Dark" on={theme === "dark"} onClick={() => setTheme("dark")} />
-            </Stack>
-            <Stack>
-              <Small icon={darkMail ? "moon" : "sun"} label={darkMail ? "Emails: dark" : "Emails: original"} disabled={theme !== "dark"} onClick={() => setDarkMail(!darkMail)} title="How email content looks in dark mode" />
+              <Small icon={darkMail ? "moon" : "sun"} label={darkMail ? "Emails: dark" : "Emails: original"} disabled={!dark} onClick={() => setDarkMail(!darkMail)} title="How email content looks in dark mode" />
             </Stack>
           </Group>
           <Group label="App">
@@ -506,7 +634,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
         <div className="search">
           <input placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <div className="scroller" ref={scroller}>
+        <div className={`scroller ${multiSel ? "picking" : ""}`} ref={scroller} aria-multiselectable="true">
           {msgs.length === 0 ? (
             <div className="empty">{query ? "No matches" : syncing ? "Downloading mail…" : "No messages"}</div>
           ) : (
@@ -514,8 +642,20 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
               {items.map((v) => {
                 const m = msgs[v.index];
                 return (
-                  <div key={m.id} className={`msg ${m.is_read ? "" : "unread"} ${selected?.id === m.id ? "active" : ""}`}
-                    style={{ top: v.start }} onClick={() => open(m)}>
+                  <div key={m.id} className={`msg ${m.is_read ? "" : "unread"} ${sel.ids.has(m.id) ? "active" : ""}`} aria-selected={sel.ids.has(m.id)}
+                    style={{ top: v.start }}
+                    onClick={(e) => {
+                      if (e.ctrlKey || e.metaKey || e.shiftKey) setSel((s) => clickSelect(msgs.map((x) => x.id), s, m.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey }));
+                      else open(m);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (!sel.ids.has(m.id)) open(m);
+                      setCtx({ x: e.clientX, y: e.clientY });
+                    }}>
+                    <input type="checkbox" className="msgcheck" checked={sel.ids.has(m.id)} aria-label="Select message" tabIndex={-1}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => setSel((s) => clickSelect(msgs.map((x) => x.id), s, m.id, { ctrl: true }))} />
                     <div className="top">
                       <span className="from">{multi && (folderId === ALL || query) && <i className="acctdot" style={{ background: colorOf(m.account_email) }} title={m.account_email} />}{m.sender_name || m.sender_address || "(no sender)"}</span>
                       <span className="date">{m.has_attachments && <Icon name="paperclip" size={12} />}{m.is_flagged && <span style={{ color: "#ff9f0a" }}><Icon name="flag" size={12} /></span>}{fmtDate(m.received_at)}</span>
@@ -531,7 +671,17 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       </section>
 
       <section className="reader">
-        {selected ? (
+        {multiSel ? (
+          <div className="multisel">
+            <b>{targets.length} messages selected</b>
+            <div className="rowbtns" style={{ justifyContent: "center" }}>
+              <button onClick={() => markRead(targets)}>{markReadLabel}</button>
+              <button onClick={() => markFlag(targets)}>{flagLabel}</button>
+              <button onClick={() => del(targets)}>Delete</button>
+            </div>
+            <span style={{ fontSize: 12 }}>Ctrl+click or Shift+click to change the selection · Esc to clear</span>
+          </div>
+        ) : selected ? (
           <>
             <header>
               <h2>{selected.subject || "(no subject)"}</h2>
@@ -605,7 +755,18 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
         </div>
       )}
       {rulesOpen && <Rules accounts={accounts} folders={folders} onClose={() => setRulesOpen(false)} onToast={flash} onAccountsChanged={() => { loadFolders(); }} />}
-      {settingsOpen && <Settings accounts={accounts} onClose={() => setSettingsOpen(false)}
+      {ctx && targets.length > 0 && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems} onClose={() => setCtx(null)} />}
+      {picker && (
+        <FolderPicker title={`${picker === "move" ? "Move" : "Copy"} ${n(targets.length)} to…`}
+          folders={folderChoices(picker).map(({ f, depth }) => ({ id: f.id, name: f.name, depth }))}
+          onCancel={() => setPicker(null)}
+          onPick={(id) => { const f = folders.find((x) => x.id === id); const k = picker; setPicker(null); if (f) (k === "move" ? moveTo : copyTo)(targets, f); }} />
+      )}
+      {ruleInit && (
+        <RuleDialog init={ruleInit.rule} busy={ruleBusy} error={ruleErr} onCancel={() => setRuleInit(null)} onSave={saveQuickRule}
+          folders={buildTree(folders.filter((f) => f.account_email === ruleInit.account)).filter(({ f }) => !["sentitems", "drafts"].includes(f.well_known ?? "")).map(({ f, depth }) => ({ id: f.id, name: f.name, depth }))} />
+      )}
+      {settingsOpen && <Settings accounts={accounts} theme={themeChoice} onTheme={chooseTheme} onClose={() => setSettingsOpen(false)}
         onAccountsChanged={async () => {
           const accs = await loadFolders();
           if (!accs.length) { setSettingsOpen(false); onSignOut(); } else syncNow();

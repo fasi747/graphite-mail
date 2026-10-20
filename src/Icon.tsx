@@ -33,6 +33,8 @@ const P: Record<string, string> = {
   mail: "M3 6h18v12H3zM3 7l9 6 9-6",
   read: "M3 9l9-6 9 6v10H3zM3 9l9 6 9-6",
   unread: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+  copy: "M8 8h12v12H8zM16 8V4H4v12h4",
+  block: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8",
 };
 
 export default function Icon({ name, size = 16 }: { name: string; size?: number }) {

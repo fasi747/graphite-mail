@@ -116,6 +116,72 @@ pub fn move_to(id: &str, folder_id: &str) -> Result<()> {
     })
 }
 
+/// Copies a message into another folder of its account. Outlook makes a second message (it arrives with the next
+/// sync); Gmail just adds the label, so the message shows under that folder at once.
+pub fn copy_to(id: &str, folder_id: &str) -> Result<()> {
+    storage::with_db(|db| {
+        let tx = db.unchecked_transaction()?;
+        let (remote_folder, kind, same_account, current, google): (String, Option<String>, bool, bool, bool) = tx
+            .query_row(
+                "SELECT f.remote_id, f.well_known_name, f.account_id=m.account_id, m.folder_id=f.id,
+                        COALESCE((SELECT provider FROM accounts WHERE id=m.account_id),'microsoft')='google'
+                 FROM folders f, messages m WHERE f.id=?1 AND m.id=?2",
+                params![folder_id, id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?
+            .ok_or(anyhow!("That message or folder no longer exists."))?;
+        if !same_account {
+            return Err(anyhow!("A message can only be copied to a folder of its own account."));
+        }
+        if current {
+            return Err(anyhow!("The message is already in that folder."));
+        }
+        if matches!(kind.as_deref(), Some("deleteditems" | "junkemail" | "sentitems" | "drafts")) {
+            return Err(anyhow!("Messages can't be copied into that folder; use Move instead."));
+        }
+        if google {
+            tx.execute("INSERT OR IGNORE INTO message_labels(message_id,folder_id) VALUES(?1,?2)", params![id, folder_id])?;
+        }
+        enqueue(&tx, id, "COPY", json!({ "destination": remote_folder }))?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+/// Local id of the account's Junk (Gmail: Spam) folder for a message.
+pub fn junk_folder_of(id: &str) -> Result<String> {
+    storage::with_db(|db| {
+        db.query_row(
+            "SELECT f.id FROM folders f JOIN messages m ON m.account_id=f.account_id WHERE m.id=?1 AND f.well_known_name='junkemail'",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(anyhow!("This account has no Junk folder yet. Try again after the next sync."))
+    })
+}
+
+/// Marks a message as spam: Outlook moves it to Junk Email, Gmail gives it the SPAM label.
+pub fn mark_spam(id: &str) -> Result<()> {
+    move_to(id, &junk_folder_of(id)?)
+}
+
+/// (account email, sender address) of a message, for blocking its sender.
+pub fn sender_of(id: &str) -> Result<(String, String)> {
+    let (email, sender): (String, Option<String>) = storage::with_db(|db| {
+        db.query_row(
+            "SELECT a.email, m.sender_address FROM messages m JOIN accounts a ON a.id=m.account_id WHERE m.id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?
+        .ok_or(anyhow!("That message no longer exists."))
+    })?;
+    let sender = sender.map(|s| s.trim().to_string()).filter(|s| s.contains('@')).ok_or(anyhow!("This message has no sender address to block."))?;
+    Ok((email, sender))
+}
+
 pub fn delete(id: &str) -> Result<()> {
     let (in_trash, trash): (bool, Option<String>) = storage::with_db(|db| {
         Ok(db.query_row(
@@ -216,6 +282,7 @@ fn describe(op: &str) -> &'static str {
         "SET_READ" => "Mark as read/unread",
         "SET_FLAG" => "Flag or unflag",
         "MOVE" => "Move to folder",
+        "COPY" => "Copy to folder",
         "DELETE_HARD" => "Delete permanently",
         "SEND" => "Send message",
         "RSVP" => "Reply to invitation",
@@ -491,6 +558,14 @@ pub async fn replay() -> Result<usize> {
                 call(
                     Method::POST,
                     &format!("{base}/me/messages/{r}/move"),
+                    Some(json!({ "destinationId": p["destination"] })),
+                )
+                .await
+            }
+            ("COPY", Some(r)) => {
+                call(
+                    Method::POST,
+                    &format!("{base}/me/messages/{r}/copy"),
                     Some(json!({ "destinationId": p["destination"] })),
                 )
                 .await
@@ -817,7 +892,32 @@ mod tests {
         assert_eq!(pending_count().unwrap(), 1); // back in line
         clear();
 
-        // 6. Offline: nothing is lost, the reason is remembered, and the error is reported.
+        // 6. Copy goes to Graph's copy endpoint and leaves the original where it is.
+        storage::with_db(|db| Ok(db.execute("INSERT INTO folders(id,account_id,remote_id,display_name) VALUES('f2','a','rf2','Projects')", [])?)).unwrap();
+        let (url, seen) = fake_graph(vec![201]).await;
+        unsafe { std::env::set_var("GM_TEST_GRAPH", &url) };
+        copy_to("m1", "f2").unwrap();
+        assert!(copy_to("m1", "f").unwrap_err().to_string().contains("already"));
+        assert_eq!(replay().await.unwrap(), 1);
+        let req = seen.lock().unwrap()[0].clone();
+        assert!(req.starts_with("POST /me/messages/r1/copy "));
+        assert!(req.contains(r#""destinationId":"rf2""#));
+        let folder: String = storage::with_db(|db| Ok(db.query_row("SELECT folder_id FROM messages WHERE id='m1'", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(folder, "f");
+
+        // 7. Spam = move to Junk; without a Junk folder it says so instead of guessing.
+        assert!(mark_spam("m2").unwrap_err().to_string().contains("no Junk folder"));
+        storage::with_db(|db| Ok(db.execute("INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('fj','a','rj','Junk Email','junkemail')", [])?)).unwrap();
+        let (url, seen) = fake_graph(vec![201]).await;
+        unsafe { std::env::set_var("GM_TEST_GRAPH", &url) };
+        mark_spam("m2").unwrap();
+        assert_eq!(replay().await.unwrap(), 1);
+        let req = seen.lock().unwrap()[0].clone();
+        assert!(req.starts_with("POST /me/messages/r2/move ") && req.contains(r#""destinationId":"rj""#));
+        assert!(sender_of("m2").unwrap_err().to_string().contains("no sender"));
+        clear();
+
+        // 8. Offline: nothing is lost, the reason is remembered, and the error is reported.
         unsafe { std::env::set_var("GM_TEST_GRAPH", "http://127.0.0.1:1") };
         q("SET_READ", "m1", json!({ "read": true }));
         assert!(replay().await.is_err());

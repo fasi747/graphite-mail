@@ -3,15 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import Mailbox from "./Mailbox";
 import { DragBar, TrafficLights } from "./WindowControls";
+import { applyTheme, cachedChoice } from "./theme";
 import "./App.css";
 
 type Account = { email: string; display_name: string };
 type SetupState = { ready: boolean; default_dir: string };
 
-try {
-  const t = localStorage.getItem("theme");
-  document.documentElement.dataset.theme = t || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-} catch { /* ignore */ }
+// Show the last theme at once; the saved app setting is loaded (and applied) by the mailbox.
+applyTheme(cachedChoice());
 
 function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () => void }) {
   const [dir, setDir] = useState(defaultDir);

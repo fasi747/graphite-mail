@@ -27,6 +27,20 @@ pub fn set_setting(key: &str, value: &str) -> Result<()> {
     })
 }
 
+/// Colour themes the UI offers ("system" follows the desktop's light/dark choice).
+pub const THEMES: [&str; 7] = ["system", "white", "lightgrey", "mediumgrey", "darkgrey", "black", "colourful"];
+
+pub fn theme() -> String {
+    get_setting("theme").filter(|t| THEMES.contains(&t.as_str())).unwrap_or_else(|| "system".into())
+}
+
+pub fn set_theme(theme: &str) -> Result<()> {
+    if !THEMES.contains(&theme) {
+        anyhow::bail!("Unknown theme {theme}");
+    }
+    set_setting("theme", theme)
+}
+
 pub fn enabled() -> bool {
     get_setting("notifications").as_deref() != Some("off")
 }
@@ -119,5 +133,14 @@ mod tests {
         .unwrap();
         assert_eq!(collect_new().unwrap(), vec![NewMail { sender: "Bob".into(), subject: "Hello".into() }]);
         assert!(collect_new().unwrap().is_empty()); // nothing announced twice
+
+        // the theme is kept in app settings; unknown values are refused, a damaged one falls back to the system's
+        assert_eq!(theme(), "system");
+        set_theme("colourful").unwrap();
+        assert_eq!(theme(), "colourful");
+        assert!(set_theme("neon").is_err());
+        assert_eq!(theme(), "colourful");
+        set_setting("theme", "dark").unwrap(); // the old Light/Dark value
+        assert_eq!(theme(), "system");
     }
 }

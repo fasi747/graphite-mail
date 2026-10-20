@@ -836,6 +836,8 @@ pub async fn apply(op: &str, entity: &str, rid: Option<&str>, p: &Value) -> Resu
                 }
             }
         }
+        // Copying is just one more label; Gmail keeps a single message.
+        ("COPY", Some(r)) => modify(r, &[p["destination"].as_str().unwrap_or_default()], &[]).await,
         // The app only asks for Gmail's "gmail.modify" permission, which cannot erase mail for good;
         // Gmail empties the Trash by itself after 30 days.
         ("DELETE_HARD", _) => Ok((200, Value::Null)),
@@ -1505,6 +1507,19 @@ pub(crate) mod tests {
         assert_eq!(order, vec!["untrash", "modify"]);
         assert_eq!(calls[1].2["addLabelIds"], json!(["Label_1"]));
 
+        // copy = one more label (shown under it at once); spam = the SPAM label
+        log.lock().unwrap().clear();
+        crate::outbox::copy_to(&m1l, &folder("Label_2")).unwrap();
+        assert!(ids(&folder("Label_2")).contains(&"Budget review".to_string()), "a copy shows under its label at once");
+        storage::with_db(|db| Ok(db.execute("INSERT OR IGNORE INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('g1-spam','g1','SPAM','Spam','junkemail')", [])?)).unwrap();
+        crate::outbox::mark_spam(&m1l).unwrap();
+        crate::outbox::replay().await.unwrap();
+        let calls: Vec<(String, String, Value)> = log.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert_eq!((calls[0].2["addLabelIds"].clone(), calls[0].2["removeLabelIds"].clone()), (json!(["Label_2"]), json!([])));
+        assert_eq!(calls[1].2["addLabelIds"], json!(["SPAM"]));
+        assert_eq!(crate::outbox::sender_of(&m1l).unwrap().0, "g@x.com");
+
         // replying joins the conversation and comes from the receiving account
         log.lock().unwrap().clear();
         crate::outbox::send(crate::outbox::Draft { mode: "reply".into(), reply_to: Some(m1l.clone()), to: vec!["mum@example.com".into()], cc: vec![], subject: "Re: Budget review".into(), html: "<p>Thanks</p>".into(), from: None, attachments: vec![] }).unwrap();
@@ -1551,7 +1566,7 @@ pub(crate) mod tests {
         let family = folder("Label_1");
         let sub = create_label("Sub", Some(&family), "g1").await.unwrap();
         assert_eq!(log.lock().unwrap().last().unwrap().2["name"], "Family/Sub");
-        assert_eq!(crate::mail::folders().unwrap().iter().filter(|f| f.account_email == "g@x.com").count(), 7);
+        assert_eq!(crate::mail::folders().unwrap().iter().filter(|f| f.account_email == "g@x.com").count(), 8); // incl. the Spam folder added above
         log.lock().unwrap().clear();
         rename_label(&family, "Kin").await.unwrap();
         let patches: Vec<(String, Value)> = log.lock().unwrap().iter().filter(|(m, _, _)| m == "PATCH").map(|(_, p, b)| (p.clone(), b["name"].as_str().unwrap().to_string().into())).collect();

@@ -284,6 +284,15 @@ pub async fn create(rule: Rule) -> Result<String> {
     Ok(id)
 }
 
+/// Blocks the sender of a message: a server rule that sends their future mail to Junk (Gmail: a filter to Spam).
+/// Returns the blocked address.
+pub async fn block_sender(message_id: &str) -> Result<String> {
+    let (account, sender) = outbox::sender_of(message_id)?;
+    let junk = outbox::junk_folder_of(message_id)?;
+    create(Rule { account, name: format!("Block {sender}"), enabled: true, from: sender.clone(), move_to: Some(junk), ..Default::default() }).await?;
+    Ok(sender)
+}
+
 pub async fn update(rule: Rule) -> Result<()> {
     let id = rule.id.clone().ok_or(anyhow!("Missing rule id"))?;
     let old = load(&id)?;
@@ -526,6 +535,27 @@ mod tests {
         storage::with_db(|db| Ok(db.execute("UPDATE rules SET from_text='', subject_text='', body_text='REFUND' WHERE id=?1", [&rid]).map(|_| ())?)).unwrap();
         assert_eq!(run_now(&rid, "mf").unwrap(), 1);
         assert!(run_now(&rid, "gi").unwrap_err().to_string().contains("same account"));
+
+        // Block sender: a rule from that address into Junk (Outlook) / Spam (Gmail)
+        storage::with_db(|db| {
+            db.execute_batch(
+                "INSERT INTO folders(id,account_id,remote_id,display_name,well_known_name) VALUES('mj','m','MS-JUNK','Junk Email','junkemail'),('gs','g','SPAM','Spam','junkemail');
+                 INSERT INTO messages(id,account_id,folder_id,remote_id,subject,sender_address,received_at) VALUES('g1','g','gi','x1','Win','spam@bad.biz',4);",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(block_sender("m2").await.unwrap(), "pal@x.com");
+        let sent = log.lock().unwrap().last().unwrap().clone();
+        assert_eq!(sent.2["conditions"]["fromAddresses"][0]["emailAddress"]["address"], "pal@x.com");
+        assert_eq!(sent.2["actions"]["moveToFolder"], "MS-JUNK");
+        assert_eq!(sent.2["displayName"], "Block pal@x.com");
+        block_sender("g1").await.unwrap();
+        let sent = log.lock().unwrap().last().unwrap().clone();
+        assert_eq!((sent.2["criteria"]["from"].clone(), sent.2["action"]["addLabelIds"].clone(), sent.2["action"]["removeLabelIds"].clone()), (json!("spam@bad.biz"), json!(["SPAM"]), json!(["INBOX"])));
+        for r in list().unwrap().into_iter().filter(|r| r.rule.name.starts_with("Block")) {
+            storage::with_db(|db| Ok(db.execute("DELETE FROM rules WHERE id=?1", [r.rule.id.unwrap()]).map(|_| ())?)).unwrap();
+        }
 
         // delete removes it on the server and here
         delete(&id).await.unwrap();

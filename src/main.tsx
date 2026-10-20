@@ -24,6 +24,7 @@ class Boundary extends React.Component<{ children: React.ReactNode }, { err: str
 }
 
 import "@fontsource-variable/inter";
+import "@fontsource-variable/lora";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -1,6 +1,6 @@
 [package]
 name = "graphite-mail"
-version = "1.7.0"
+version = "1.8.0"
 description = "Offline-first Microsoft 365 mail & calendar client for Linux"
 authors = ["Faisal Gillani"]
 edition = "2024"

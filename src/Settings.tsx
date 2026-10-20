@@ -2,6 +2,13 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
+import { THEMES, ThemeChoice } from "./theme";
+
+/** Small preview colours for each theme: sidebar, content, accent. */
+const SWATCH: Record<string, [string, string, string]> = {
+  white: ["#f6f6f7", "#ffffff", "#0a7cff"], lightgrey: ["#dfe3ea", "#ffffff", "#0a7cff"], mediumgrey: ["#a3a7ad", "#c9ccd1", "#1f5fbf"],
+  darkgrey: ["#28282e", "#1f1f23", "#0a84ff"], black: ["#000000", "#111113", "#0a84ff"], colourful: ["#12352b", "#ffffff", "#c9a227"],
+};
 
 type Info = { path: string; size_bytes: number };
 type Acct = { email: string; display_name: string; provider?: string };
@@ -10,7 +17,9 @@ type Progress = { phase: number; label: string; done: number; total: number };
 
 const fmtSize = (b: number) => (b > 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : `${Math.max(1, Math.round(b / (1 << 20)))} MB`);
 
-export default function Settings({ accounts, onClose, onAccountsChanged }: { accounts: Acct[]; onClose: () => void; onAccountsChanged: () => void }) {
+export default function Settings({ accounts, onClose, onAccountsChanged, theme, onTheme }: {
+  accounts: Acct[]; onClose: () => void; onAccountsChanged: () => void; theme: ThemeChoice; onTheme: (t: ThemeChoice) => void;
+}) {
   const [adding, setAdding] = useState<"microsoft" | "google" | null>(null);
   const [info, setInfo] = useState<Info | null>(null);
   const [moving, setMoving] = useState<Progress | null>(null);
@@ -111,6 +120,17 @@ export default function Settings({ accounts, onClose, onAccountsChanged }: { acc
               </div>
             </div>
           ))}
+          <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>APPEARANCE</div>
+          <div className="themegrid" role="radiogroup" aria-label="Theme">
+            <button role="radio" aria-checked={theme === "system"} className={`themeopt ${theme === "system" ? "on" : ""}`} onClick={() => onTheme("system")}>
+              <span className="swatch"><i style={{ background: "#ffffff" }} /><i style={{ background: "#1f1f23" }} /></span>Match system
+            </button>
+            {THEMES.map((t) => (
+              <button key={t.id} role="radio" aria-checked={theme === t.id} className={`themeopt ${theme === t.id ? "on" : ""}`} onClick={() => onTheme(t.id)}>
+                <span className="swatch">{SWATCH[t.id].map((c, i) => <i key={i} style={{ background: c }} />)}</span>{t.label}
+              </button>
+            ))}
+          </div>
           <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>NOTIFICATIONS</div>
           <label className="switchrow">
             <span>Show a desktop notification when new mail arrives in the Inbox</span>

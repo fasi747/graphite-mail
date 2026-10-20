@@ -152,6 +152,33 @@ fn delete_message(id: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
+fn copy_message(id: String, folder_id: String) -> CmdResult<()> {
+    outbox::copy_to(&id, &folder_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn mark_spam(id: String) -> CmdResult<()> {
+    outbox::mark_spam(&id).map_err(|e| e.to_string())
+}
+
+/// Adds a server rule sending the message's sender to Junk / Spam; returns the blocked address.
+#[tauri::command]
+async fn block_sender(id: String) -> CmdResult<String> {
+    rules::block_sender(&id).await.map_err(|e| e.to_string())
+}
+
+/// The colour theme: "system" (follow the desktop) or one of the named themes.
+#[tauri::command]
+fn get_theme() -> String {
+    notify::theme()
+}
+
+#[tauri::command]
+fn set_theme(theme: String) -> CmdResult<()> {
+    notify::set_theme(&theme).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn send_mail(draft: outbox::Draft) -> CmdResult<bool> {
     outbox::send(draft).map_err(|e| e.to_string())?;
     // Try to send right away; if offline it stays queued for the next sync.
@@ -464,6 +491,11 @@ pub fn run() {
             set_flag,
             move_message,
             delete_message,
+            copy_message,
+            mark_spam,
+            block_sender,
+            get_theme,
+            set_theme,
             send_mail,
             pending_actions,
             pending_details,
