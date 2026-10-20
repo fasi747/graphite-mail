@@ -2,7 +2,7 @@
 
 **What it is:** a Linux desktop mail + calendar client for Microsoft 365 and Gmail (Tauri 2, Rust backend, React UI). Offline-first: mail is stored locally and changes sync later.
 **Build to test:** `graphite-mail_<version>_amd64.deb` (Ubuntu 24.04). Install: `sudo apt install ./graphite-mail_<version>_amd64.deb`, run `graphite-mail` (start it from a terminal and keep the `[graphite]` log lines).
-**Source:** github.com/fasi747/graphite-mail (private; access on request).
+**Source:** github.com/quietbytehq/graphite-mail (private; access on request).
 
 ## Please use test accounts only
 Use a throwaway Microsoft 365 user and a throwaway Gmail account. Rules, bulk actions and attachments will be tried. Do not use real mailboxes. Tell us if you need test accounts.
