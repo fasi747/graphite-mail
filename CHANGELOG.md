@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.10.2 — Safer menus and first-run sign-in
+- Mail list right-click menu: the keyboard never starts on Delete, Block sender or Mark as spam. When the items above
+  them are unavailable (several messages selected, or the message still loading) focus starts on the next safe item,
+  and if nothing safe is enabled the menu itself takes focus, so the first Enter can never delete anything. Arrow keys
+  still reach every item. The same rule applies to the Contacts menu (Block sender).
+- First-run screen: **Cancel sign-in** while the browser sign-in waits, a 2-minute time limit with a message, and a
+  cancelled or timed-out sign-in can no longer bring a late error or open the mailbox. The sign-in logic is now shared
+  with Settings → Accounts (one hook, `src/signIn.ts`), and leaving the screen clears its timer.
+
 ## 1.10.1 — Contacts right-click menu
 - Right-click a contact (or Shift+F10 / the menu key) for New email, New meeting (contact invited, in that account's
   calendar), Search mail with this person (local search, `with:address` in the search box), Copy email address,

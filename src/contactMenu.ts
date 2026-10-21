@@ -43,8 +43,8 @@ function sections(...groups: (MenuItem | null | false)[][]): MenuItem[] {
 }
 
 /** An item acting on one address: direct with one, a submenu to choose with several. */
-function perAddress(label: string, icon: string, emails: string[], act: (e: string) => void, show: (e: string) => string = (e) => e): MenuItem {
-  return emails.length > 1 ? { label, icon, submenu: emails.map((e) => ({ label: show(e), onClick: () => act(e) })) } : { label, icon, onClick: () => act(emails[0]) };
+function perAddress(label: string, icon: string, emails: string[], act: (e: string) => void, show: (e: string) => string = (e) => e, destructive = false): MenuItem {
+  return emails.length > 1 ? { label, icon, destructive, submenu: emails.map((e) => ({ label: show(e), onClick: () => act(e) })) } : { label, icon, destructive, onClick: () => act(emails[0]) };
 }
 
 export function contactMenu(cs: MenuContact[], a: ContactActions): MenuItem[] {
@@ -82,7 +82,7 @@ export function contactMenu(cs: MenuContact[], a: ContactActions): MenuItem[] {
       { label: "Export as vCard…", icon: "export", onClick: () => a.exportVcf([c]) },
     ],
     has ? [
-      perAddress("Block sender", "block", e, (x) => a.block(c.account_email, x)),
+      perAddress("Block sender", "block", e, (x) => a.block(c.account_email, x), undefined, true),
       perAddress("Create rule for this sender…", "rules", e, (x) => a.createRule(c.account_email, x)),
     ] : [],
   );

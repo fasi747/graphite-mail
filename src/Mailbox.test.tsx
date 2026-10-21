@@ -8,6 +8,13 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ minimize() {}, toggleMaximize() {}, close() {}, startDragging() {} }) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(), open: vi.fn() }));
+// jsdom has no layout, so the real virtualizer would show no rows: list every message.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getVirtualItems: () => Array.from({ length: count }, (_, index) => ({ index, key: index, start: index * 76, size: 76 })),
+    getTotalSize: () => count * 76,
+  }),
+}));
 const mocked = vi.mocked(invoke);
 
 beforeAll(() => {
@@ -15,8 +22,9 @@ beforeAll(() => {
   window.matchMedia ??= ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })) as any;
 });
 
-function backend(accounts: object[]) {
-  mocked.mockImplementation(async (cmd: string) => {
+function backend(accounts: object[], extra: Record<string, (args?: unknown) => unknown> = {}) {
+  mocked.mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd in extra) return extra[cmd](args);
     switch (cmd) {
       case "list_accounts": return accounts;
       case "get_theme": return "white";
@@ -78,5 +86,47 @@ describe("Contacts tab", () => {
     fireEvent.contextMenu(await screen.findByText("Ana Diaz"));
     fireEvent.click(await screen.findByRole("menuitem", { name: /New meeting/ }));
     expect(await screen.findByDisplayValue("ana@corp.com")).toBeTruthy(); // the invitee is filled in
+  });
+});
+
+describe("Mail list right-click menu", () => {
+  const inbox = { id: "f1", remote_id: "r1", name: "Inbox", well_known: "inbox", unread: 1, total: 1, parent_remote_id: null, account_email: "me@corp.com" };
+  const msg = { id: "m1", subject: "Hello", sender_name: "Ana", sender_address: "ana@corp.com", snippet: "hi", received_at: 1, is_read: true, is_flagged: false, has_attachments: false, account_email: "me@corp.com" };
+  const openMenu = async () => {
+    render(<Mailbox account={{ email: "me@corp.com", display_name: "Me" }} onSignOut={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText("Hello"));
+    return screen.getByRole("menu", { name: "Message actions" });
+  };
+  const calledWith = (cmd: string) => mocked.mock.calls.filter(([c]) => c === cmd);
+
+  it("never starts the keyboard on Delete, even while Reply is unavailable, and a first Enter can't delete", async () => {
+    // get_message never answers: Reply / Reply All / Forward stay disabled, so the first enabled item is Delete.
+    backend([{ email: "me@corp.com", display_name: "Me", provider: "microsoft" }], { list_folders: () => [inbox], list_messages: () => [msg], get_message: () => new Promise(() => {}) });
+    const menu = await openMenu();
+    const focused = document.activeElement as HTMLElement;
+    expect(menu.contains(focused)).toBe(true);
+    expect(focused.textContent).not.toMatch(/Delete|spam|Block/);
+    expect(focused.textContent).toContain("Move to…");
+    fireEvent.keyDown(menu, { key: "Enter" });
+    expect(calledWith("delete_message")).toHaveLength(0);
+    expect(calledWith("mark_spam")).toHaveLength(0);
+    expect(screen.getByPlaceholderText("Find a folder")).toBeTruthy(); // Move to… opened the folder picker instead
+  });
+
+  it("starts on Reply once the message is open, and Delete still works when chosen on purpose", async () => {
+    backend([{ email: "me@corp.com", display_name: "Me", provider: "microsoft" }], { list_folders: () => [inbox], list_messages: () => [msg], get_message: () => ({ ...msg, to_json: null, cc_json: null, body_html: "" }) });
+    render(<Mailbox account={{ email: "me@corp.com", display_name: "Me" }} onSignOut={() => {}} />);
+    const row = await screen.findByText("Hello", { selector: ".subj" });
+    fireEvent.click(row);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^Reply/ }).some((b) => !(b as HTMLButtonElement).disabled)).toBe(true)); // the message is open
+    fireEvent.contextMenu(row);
+    const menu = screen.getByRole("menu", { name: "Message actions" });
+    expect(document.activeElement?.textContent).toContain("Reply");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toContain("Delete");
+    fireEvent.keyDown(menu, { key: "Enter" });
+    await waitFor(() => expect(calledWith("delete_message")).toHaveLength(1));
   });
 });

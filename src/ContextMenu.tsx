@@ -1,15 +1,18 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import Icon from "./Icon";
-import { placeMenu, placeSubmenu, stepItem } from "./menu";
+import { initialFocus, placeMenu, placeSubmenu, stepItem } from "./menu";
 
 export type MenuItem = {
   label: string; icon?: string; onClick?: () => void; disabled?: boolean; separator?: boolean;
   /** Choices shown beside the item (e.g. which address to use). */
   submenu?: MenuItem[];
+  /** Deletes, blocks or reports something: never the item the keyboard starts on, so a stray Enter can't do it. */
+  destructive?: boolean;
 };
 
 const offs = (items: MenuItem[]) => items.map((i) => !!i.disabled);
-const firstOn = (items: MenuItem[]) => stepItem(offs(items), -1, 1);
+/** Where the keyboard starts: the first enabled, non-destructive item; -1 (the menu itself) when there is none. */
+export const firstOn = (items: MenuItem[]) => initialFocus(items.map((i) => ({ disabled: !!i.disabled, destructive: !!i.destructive })));
 
 /** One panel of a menu. Placement is decided once its size is known, so it can stay inside the window. */
 function Panel({ items, label, place, focus, takeFocus, open, onKey, onHover, onPick, panel }: {
@@ -25,7 +28,7 @@ function Panel({ items, label, place, focus, takeFocus, open, onKey, onHover, on
     if (el) setPos({ ...place(el.offsetWidth, el.offsetHeight), ready: true });
   }, []);
   useLayoutEffect(() => {
-    if (takeFocus) (ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[focus] ?? ref.current)?.focus();
+    if (takeFocus) ((focus >= 0 && ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[focus]) || ref.current)?.focus();
   }, [focus, pos.ready, takeFocus]);
   return (
     <div ref={ref} className="menu ctxmenu" role="menu" tabIndex={-1} aria-label={label} onKeyDown={onKey}
@@ -45,7 +48,8 @@ function Panel({ items, label, place, focus, takeFocus, open, onKey, onHover, on
 }
 
 /** Right-click menu: stays on screen, Esc closes, arrow keys / Home / End move, Enter or Space chooses.
- *  An item with a submenu opens it with → (or Enter, or hovering); ← or Esc goes back. */
+ *  An item with a submenu opens it with → (or Enter, or hovering); ← or Esc goes back.
+ *  The keyboard never starts on a destructive item (Delete, Block, Spam): a first Enter can't do harm. */
 export function ContextMenu({ x, y, items, onClose, label = "Message actions" }: { x: number; y: number; items: MenuItem[]; onClose: () => void; label?: string }) {
   const root = useRef<HTMLDivElement>(null);
   const [focus, setFocus] = useState(() => firstOn(items));
@@ -60,12 +64,12 @@ export function ContextMenu({ x, y, items, onClose, label = "Message actions" }:
     setSub({ i, rect: el.getBoundingClientRect(), keyboard });
     setSubFocus(firstOn(s));
   };
-  const itemEl = (i: number) => root.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[i];
+  const itemEl = (i: number) => (i >= 0 ? root.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[i] : undefined);
   const pick = (i: number, el: HTMLElement, keyboard = false) => (items[i].submenu ? openSub(i, el, keyboard) : run(items[i]));
   const moves = (e: React.KeyboardEvent, list: MenuItem[], set: (f: (n: number) => number) => void) => {
     const k = e.key, off = offs(list);
     if (k === "ArrowDown") set((f) => stepItem(off, f, 1));
-    else if (k === "ArrowUp") set((f) => stepItem(off, f, -1));
+    else if (k === "ArrowUp") set((f) => stepItem(off, f < 0 ? 0 : f, -1));
     else if (k === "Home") set(() => stepItem(off, -1, 1));
     else if (k === "End") set(() => stepItem(off, 0, -1));
     else return false;
@@ -78,7 +82,7 @@ export function ContextMenu({ x, y, items, onClose, label = "Message actions" }:
     const k = e.key;
     if (k === "Escape" || k === "Tab") { e.preventDefault(); onClose(); }
     else if (k === "ArrowRight" && items[focus]?.submenu) { e.preventDefault(); const el = itemEl(focus); if (el) openSub(focus, el, true); }
-    else if (k === "Enter" || k === " ") { e.preventDefault(); const el = itemEl(focus); if (el) pick(focus, el, true); }
+    else if (k === "Enter" || k === " ") { e.preventDefault(); if (focus < 0) return; const el = itemEl(focus); if (el) pick(focus, el, true); }
   };
   const onSubKey = (e: React.KeyboardEvent) => {
     e.stopPropagation();
@@ -86,7 +90,7 @@ export function ContextMenu({ x, y, items, onClose, label = "Message actions" }:
     const k = e.key;
     if (k === "Escape" || k === "ArrowLeft") { e.preventDefault(); setSub(null); }
     else if (k === "Tab") { e.preventDefault(); onClose(); }
-    else if (k === "Enter" || k === " ") { e.preventDefault(); if (subItems[subFocus]) run(subItems[subFocus]); }
+    else if (k === "Enter" || k === " ") { e.preventDefault(); if (subFocus >= 0 && subItems[subFocus]) run(subItems[subFocus]); }
   };
   return (
     <div className="ctx-backdrop" onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>

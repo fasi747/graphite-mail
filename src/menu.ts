@@ -21,3 +21,10 @@ export function stepItem(disabled: boolean[], from: number, dir: 1 | -1) {
   }
   return from;
 }
+
+/** Where keyboard focus starts in a menu: the first enabled item that isn't destructive, so the first Enter can never
+ *  delete, block or report anything. -1 when every enabled item is destructive: the menu itself takes focus and the
+ *  arrow keys pick an item on purpose. */
+export function initialFocus(items: { disabled: boolean; destructive: boolean }[]) {
+  return items.findIndex((it) => !it.disabled && !it.destructive);
+}

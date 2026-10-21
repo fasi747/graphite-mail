@@ -476,14 +476,14 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     { label: "Reply", icon: "reply", onClick: () => startCompose("reply"), disabled: !one },
     { label: "Reply All", icon: "replyall", onClick: () => startCompose("replyAll"), disabled: !one },
     { label: "Forward", icon: "forward", onClick: () => startCompose("forward"), disabled: !one },
-    { label: multiSel ? `Delete ${targets.length}` : "Delete", icon: "trash", onClick: () => del(targets), separator: true },
+    { label: multiSel ? `Delete ${targets.length}` : "Delete", icon: "trash", onClick: () => del(targets), separator: true, destructive: true },
     { label: "Move to…", icon: "move", onClick: () => setPicker("move"), disabled: !tAcct },
     { label: "Copy to…", icon: "copy", onClick: () => setPicker("copy"), disabled: !tAcct },
     { label: markReadLabel, icon: bulkRead(targets) ? "read" : "unread", onClick: () => markRead(targets), separator: true },
     { label: flagLabel, icon: "flag", onClick: () => markFlag(targets) },
     { label: "Create rule…", icon: "rules", onClick: openRuleDialog, disabled: targets.length !== 1, separator: true },
-    { label: "Block sender", icon: "block", onClick: () => blockSenders(targets), disabled: !targets.some((m) => m.sender_address) },
-    { label: "Mark as spam", icon: "junkemail", onClick: () => markSpam(targets), disabled: inJunk },
+    { label: "Block sender", icon: "block", onClick: () => blockSenders(targets), disabled: !targets.some((m) => m.sender_address), destructive: true },
+    { label: "Mark as spam", icon: "junkemail", onClick: () => markSpam(targets), disabled: inJunk, destructive: true },
   ];
   const newMeeting = (teams: boolean, attendees?: string[], account?: string) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1, attendees, account })); };
   /** Contacts → Block sender: the same server rule as blocking from a message (future mail goes to Junk). */
