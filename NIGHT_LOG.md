@@ -1,6 +1,57 @@
 # Night log — overnight/v1.11
 
-(Summary is added at the top when the run ends.)
+## Summary (read this first)
+
+**All five tasks done**, each committed and pushed to `origin/overnight/v1.11` as it finished. Nothing merged to main,
+no tags, no releases, no `.deb` built, the Google client secret never read, printed or used (every cargo/npm command
+ran with `env -u GRAPHITE_GOOGLE_CLIENT_SECRET`).
+
+| Task | Version | Commit | State |
+|---|---|---|---|
+| 1. Context-menu focus + first-run Cancel sign-in / timeout | 1.10.2 | "Safer context-menu focus and cancellable first-run sign-in" | ✅ |
+| 2. Bcc for Graph, Gmail API, SMTP; drafts; autocomplete | 1.10.3 | "Bcc for Microsoft 365, Gmail and app-password accounts" | ✅ |
+| 3. Windows port, NSIS, release workflow, platform tests | 1.11.0 | "Windows port: platform code, NSIS bundle, release workflow" | ✅ code + CI; real-machine checks below |
+| 4. Gmail (app password) contacts: people you've emailed, imports | 1.11.0 | "Local contacts for Gmail app-password accounts" | ✅ |
+| 5. README, screenshots, changelog, user guide | — | "Docs: README for Linux and Windows…" | ✅ |
+
+**Final checks (last run, after Task 5):** `tsc --noEmit` clean · frontend **88 tests** in 13 files (was 64) ·
+Rust **83 tests** (was 69) · `npm run build` OK · `cargo build` OK · `cargo check --target x86_64-pc-windows-gnu --tests` OK.
+
+**Files changed vs main:** 65 files changed, 2499 insertions(+), 239 deletions(-).
+
+**What could not be verified here (no Microsoft, Google or Windows reachable):**
+1. Windows: everything in the Task 3 list below (installer, Credential Manager, file locking during a data-folder move,
+   frameless-window resizing, toasts, MSVC build). The CI's Windows job will show the first of these when you push a tag.
+2. Bcc delivery end to end: that Gmail strips the `Bcc` header for the Gmail-API path, that Outlook reply/forward with
+   `bccRecipients` delivers to the blind copy. (Tests prove what each provider is *sent*.)
+3. Cancel sign-in against a real browser tab (the Rust side was already tested in v1.9.1).
+4. `is_automated()` against a real Gmail mailbox, and real Google Contacts / phone vCard exports.
+5. The workflow itself (it is syntactically valid YAML; it has not run yet). Pushing `.github/workflows/` was accepted.
+
+**Suggested review order:**
+1. `NIGHT_LOG.md` (this file) and `CHANGELOG.md` (1.10.2, 1.10.3, 1.11.0).
+2. Task 1: `src/menu.ts` (`initialFocus`), `src/ContextMenu.tsx`, `src/signIn.ts`, `src/App.tsx`; tests in
+   `ContextMenu.test.tsx`, `Mailbox.test.tsx`, `App.test.tsx`.
+3. Task 2: `src-tauri/src/outbox.rs` (Graph `bccRecipients`), `google.rs` (`build_raw` Bcc header), `imap.rs` (envelope
+   only), `drafts.rs` + `storage.rs` migration; the three leak tests; `src/Compose.tsx`.
+4. Task 3: `src-tauri/Cargo.toml` (deps), `migrate.rs` (`free_space`), `storage.rs` (`config_dir`, `default_data_dir`),
+   `attachments.rs` (`safe_name`), `tauri.windows.conf.json`, `.github/workflows/release.yml`, `platform_tests.rs`.
+5. Task 4: `src-tauri/src/local_contacts.rs` (+ tests), the `contacts.rs` diff (group/provider filter, refresh, suggest),
+   `sync.rs` hook, `src/ContactsView.tsx`, `Settings.tsx`.
+6. Task 5: `README.md`, `docs/screenshots/`, `docs/USER-GUIDE.md`.
+
+**Decisions I made without asking (details in each task):** Bcc-only messages are allowed; the Gmail-API path sends a
+`Bcc` header (the only way that API takes envelope recipients); data on Windows goes to `%LOCALAPPDATA%` (not roaming);
+`XDG_CONFIG_HOME` is honoured on every platform; `ring` was not swapped in for aws-lc-rs (the workflow installs NASM
+instead); imports go to the account chosen in the Contacts filter, else the first app-password account; Windows bundle
+settings live in Tauri's `tauri.windows.conf.json` overlay so Linux builds are untouched; tests that asserted old
+limitations (no contacts / suggestions for IMAP accounts, Remove cached contacts only for Microsoft) were updated.
+
+**Open problems / things to watch:** Credential Manager's 2560-byte limit vs long Microsoft refresh tokens; the Windows
+`cargo test` run (file locking in the migration tests); the compose screenshot shows Bcc typed but without the
+suggestion list open (cosmetic); `docs/screenshots` adds 3.1 MB to the repo.
+
+---
 
 ## Pre-check
 - `git fetch origin && git checkout main && git pull` → main at 6ae8af6 (v1.10.1 tag present).
