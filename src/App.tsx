@@ -64,6 +64,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [appPassword, setAppPassword] = useState(false);
+  const [googleOk, setGoogleOk] = useState<boolean | null>(null);
+  useEffect(() => { invoke<boolean>("google_sign_in_available").then(setGoogleOk).catch(() => setGoogleOk(false)); }, []);
 
   const loadSetup = () => invoke<SetupState>("setup_state").then(setSetup).catch((e) => setError(String(e)));
 
@@ -124,8 +126,9 @@ export default function App() {
         <button className="primary" onClick={signIn} disabled={busy}>
           {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
         </button>
-        <button onClick={signInGoogle} disabled={busy}>Sign in with Google</button>
+        {googleOk && <button onClick={signInGoogle} disabled={busy}>Sign in with Google</button>}
       </div>
+      {googleOk === false && <p className="muted">Google sign-in coming soon. Use an app password for now.</p>}
       <button className="linkish" onClick={() => { setError(""); setAppPassword(true); }} disabled={busy}>Use Gmail with an app password instead</button>
       {busy && <p className="muted">Finish signing in in your web browser, then come back here.</p>}
       {error && <p className="error">{error}</p>}

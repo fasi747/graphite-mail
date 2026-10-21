@@ -236,9 +236,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
     }
     open(url.as_str())?;
 
-    let code = tokio::time::timeout(Duration::from_secs(300), wait_for_code(&listener, &state))
-        .await
-        .map_err(|_| anyhow!("Sign-in timed out"))??;
+    let code = wait_for_sign_in(&listener, &state).await?;
 
     let tok = token_request(&[
         ("client_id", CLIENT_ID),
@@ -255,6 +253,22 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
     remember(&account, tok.refresh_token.as_deref().ok_or(anyhow!("No refresh token"))?)?;
     cache_put(&account.email, &tok.access_token, tok.expires_in);
     Ok(account)
+}
+
+/// Lets the user give up on a browser sign-in that never comes back.
+static SIGN_IN_CANCEL: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Stops every browser sign-in that is still waiting (Microsoft or Google).
+pub fn cancel_sign_in() {
+    SIGN_IN_CANCEL.notify_waiters();
+}
+
+/// Waits for the browser to come back with the sign-in code: at most five minutes, or until cancel_sign_in().
+pub(crate) async fn wait_for_sign_in(listener: &TcpListener, state: &str) -> Result<String> {
+    tokio::select! {
+        r = tokio::time::timeout(Duration::from_secs(300), wait_for_code(listener, state)) => r.map_err(|_| anyhow!("Sign-in timed out"))?,
+        _ = SIGN_IN_CANCEL.notified() => Err(anyhow!("Sign-in was cancelled.")),
+    }
 }
 
 pub(crate) async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
@@ -410,4 +424,18 @@ pub fn sign_out_account(email: Option<&str>) -> Result<()> {
 
 pub fn sign_out() -> Result<()> {
     sign_out_account(None)
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn a_waiting_browser_sign_in_can_be_cancelled() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let waiting = tokio::spawn(async move { super::wait_for_sign_in(&listener, "state").await });
+        // Let it start waiting, then give up as the Cancel button (or the UI's time limit) does.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        super::cancel_sign_in();
+        let r = tokio::time::timeout(std::time::Duration::from_secs(2), waiting).await.expect("stops at once").unwrap();
+        assert!(r.unwrap_err().to_string().contains("cancelled"));
+    }
 }

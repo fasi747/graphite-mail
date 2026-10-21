@@ -35,6 +35,7 @@ chmod +x graphite-mail_<version>_amd64.AppImage
 You can use more than one account at the same time.
 
 - **Add an account:** gear → **Add Microsoft account** or **Add Google account**. Your browser opens; sign in and come back.
+  Changed your mind? **Cancel sign-in** stops waiting (after two minutes Graphite Mail stops waiting by itself).
   Or **Add Gmail (app password)** to use Gmail without the browser sign-in (see below).
 - **The sidebar** has one section per account (name and email on top, its folders below; click the header to fold it).
   With two or more accounts, **All Inboxes** at the top shows every account's Inbox together. A small coloured dot tells you which account a message belongs to.

@@ -23,3 +23,13 @@ describe("app password accounts", () => {
     expect(providerLabel(undefined)).toBe("Microsoft 365");
   });
 });
+
+describe("connect hint", () => {
+  it("names what is missing", async () => {
+    const { connectHint } = await import("./accounts");
+    expect(connectHint("", "")).toBe("Enter both fields to continue");
+    expect(connectHint("me@gmail.com", "   ")).toBe("Enter both fields to continue");
+    expect(connectHint("me@gmail.com", "abcd")).toBe("4 of 16 letters");
+    expect(connectHint("me@gmail.com", "abcd efgh ijkl mnop")).toBeNull();
+  });
+});

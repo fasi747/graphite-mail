@@ -67,6 +67,18 @@ async fn add_google_account(app: tauri::AppHandle) -> CmdResult<Account> {
         .map_err(|e| e.to_string())
 }
 
+/// Whether "Add Google account" can work in this build (false when it was built without the Google client secret).
+#[tauri::command]
+fn google_sign_in_available() -> bool {
+    google::sign_in_available()
+}
+
+/// Gives up on a browser sign-in that is still waiting (the user cancelled, or it took too long).
+#[tauri::command]
+fn cancel_sign_in() {
+    auth::cancel_sign_in();
+}
+
 /// Gmail with an app password (IMAP + SMTP): checks both servers accept it, then keeps it in the keyring.
 /// Needs no Google sign-in client, so it works in every build.
 #[tauri::command]
@@ -493,6 +505,8 @@ pub fn run() {
             remove_account,
             add_google_account,
             add_imap_account,
+            google_sign_in_available,
+            cancel_sign_in,
             get_notifications,
             set_notifications,
             create_folder,

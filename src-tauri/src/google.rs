@@ -14,7 +14,6 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -80,6 +79,11 @@ fn resolve_client(env_id: Option<String>, env_secret: Option<String>, built_id: 
     Ok((id, secret))
 }
 
+/// Whether this build can sign in to Google (it was built with the Google client secret, or one is set at run time).
+pub fn sign_in_available() -> bool {
+    client().is_ok()
+}
+
 fn client() -> Result<(String, String)> {
     resolve_client(std::env::var("GRAPHITE_GOOGLE_CLIENT_ID").ok(), std::env::var("GRAPHITE_GOOGLE_CLIENT_SECRET").ok(), CLIENT_ID, CLIENT_SECRET)
 }
@@ -137,9 +141,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
     }
     open(u.as_str())?;
 
-    let code = tokio::time::timeout(Duration::from_secs(300), auth::wait_for_code(&listener, &state))
-        .await
-        .map_err(|_| anyhow!("Sign-in timed out"))??;
+    let code = auth::wait_for_sign_in(&listener, &state).await?;
 
     let mut form = vec![
         ("client_id", client_id.as_str()),

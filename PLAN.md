@@ -65,3 +65,11 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Folder create/rename/delete over IMAP; rules for this account type run locally on new Inbox mail
 - [x] End-to-end test against a pretend Gmail IMAP + SMTP server
 - [ ] Tested with a real @gmail.com account and app password
+
+## v1.9.1 — Settings → Accounts fixes (from a user screencast)
+- [x] "Add Gmail (app password)" toggles the form; opening it scrolls to it and focuses the address field
+- [x] Text boxes have a solid background, a visible border and a readable placeholder in all six themes (3:1 border, 4.5:1 placeholder)
+- [x] Connect explains why it is inactive ("Enter both fields to continue", address format, letters typed)
+- [x] Browser sign-in can be cancelled, and stops by itself after 2 minutes (also in the app's sign-in listener); the app-password button stays usable meanwhile
+- [x] Builds without the Google client secret show "Google sign-in coming soon. Use an app password for now." instead of a Google button
+- [x] Component tests (jsdom + Testing Library) for the above

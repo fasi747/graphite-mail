@@ -15,6 +15,10 @@
   --danger: #e5484d;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 28px rgba(0, 0, 0, 0.08);
   --field: rgba(118, 118, 128, 0.12);
+  /* Text boxes: solid background, visible border and readable placeholder in every theme. */
+  --input-bg: #ffffff;
+  --input-border: #858a92;
+  --input-placeholder: #6b7079;
   /* Window chrome (sidebar, ribbon, list header) and accents; themes override these. */
   --chrome: var(--glass);
   --chrome-text: var(--text-primary);
@@ -41,6 +45,7 @@
   --glass: #ffffff;
   --glass-border: rgba(0, 0, 0, 0.06);
   --hover: rgba(0, 0, 0, 0.04);
+  --input-bg: #fafafb;
 }
 :root[data-theme="mediumgrey"] {
   --window: #a7abb1;
@@ -55,6 +60,9 @@
   --text-secondary: #3b4047;
   --separator: rgba(0, 0, 0, 0.13);
   --field: rgba(0, 0, 0, 0.08);
+  --input-bg: #f1f2f4;
+  --input-border: #5d626a;
+  --input-placeholder: #50555d;
 }
 :root[data-theme="darkgrey"] {
   --window: #1b1b1f;
@@ -70,6 +78,9 @@
   --accent: #0a84ff;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
   --field: rgba(118, 118, 128, 0.24);
+  --input-bg: #2b2b31;
+  --input-border: #7a7a84;
+  --input-placeholder: #a3a3ab;
 }
 :root[data-theme="black"] {
   --window: #000000;
@@ -85,6 +96,9 @@
   --accent: #0a84ff;
   --shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
   --field: rgba(118, 118, 128, 0.26);
+  --input-bg: #1a1a1d;
+  --input-border: #76767e;
+  --input-placeholder: #a0a0a7;
 }
 :root[data-theme="colourful"] {
   --window: #e9ecea;
@@ -101,6 +115,9 @@
   --accent: #c9a227;
   --on-accent: #1b2b26;
   --field: rgba(27, 43, 38, 0.07);
+  --input-bg: #ffffff;
+  --input-border: #7d8a84;
+  --input-placeholder: #5f6b66;
   --chrome: #12352b;
   --chrome-text: #f3f1e8;
   --chrome-muted: rgba(243, 241, 232, 0.66);
@@ -136,6 +153,13 @@ input {
   border: 0; border-radius: 9px; padding: 7px 11px; user-select: text;
 }
 input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+/* As strong as a plain "input" rule (it comes later, so it wins over that); components that style their own
+   fields (.field input, …) still win over it. */
+input:where(:not([type="checkbox"]):not([type="radio"])), textarea {
+  background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-primary);
+}
+input::placeholder, textarea::placeholder { color: var(--input-placeholder); opacity: 1; }
+input:disabled, textarea:disabled { opacity: .6; }
 .error { color: var(--danger); }
 .muted { color: var(--text-secondary); }
 
@@ -236,7 +260,7 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .sheet-bar b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .field { display: flex; align-items: center; gap: 8px; padding: 2px 16px; border-bottom: 1px solid var(--separator); }
 .field span { color: var(--text-secondary); width: 58px; }
-.field input { flex: 1; background: transparent; border-radius: 0; padding: 8px 0; }
+.field input { flex: 1; background: transparent; border: 0; border-radius: 0; padding: 8px 0; }
 .field input:focus { outline: none; }
 .fmt { display: flex; gap: 2px; padding: 4px 10px; border-bottom: 1px solid var(--separator); }
 .editor { flex: 1; overflow-y: auto; padding: 14px 18px; outline: none; user-select: text; line-height: 1.5; }
@@ -302,7 +326,8 @@ input:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transpare
 .form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }
 .form label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text-primary); font-size: 13px; }
 .form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.form select, .form textarea { font: inherit; color: var(--text-primary); background: var(--field); border: 0; border-radius: 9px; padding: 7px 10px; }
+.form select, .form textarea { font: inherit; color: var(--text-primary); border-radius: 9px; padding: 7px 10px; }
+.form select { background: var(--field); border: 0; }
 .form textarea { resize: vertical; user-select: text; }
 
 .progress { height: 8px; border-radius: 999px; background: var(--field); overflow: hidden; margin: 8px 0; }
@@ -444,3 +469,6 @@ h1, h2, .toolbar .title b, .brand-name, .sheet-bar b, .form > b { font-family: v
 .apppw-help { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; }
 .apppw-help a { color: var(--accent); }
 .onboard .apppw { width: min(420px, 100%); margin-top: 14px; }
+.apppw-hint { font-size: 12px; }
+/* A button that opens a section shows it is open, instead of looking switched off. */
+button.toggled { background: color-mix(in srgb, var(--accent) 16%, var(--field)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }

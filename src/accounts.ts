@@ -13,3 +13,15 @@ export const cleanAppPassword = (s: string) => s.replace(/\s+/g, "");
 export const APP_PASSWORD_LENGTH = 16;
 
 export const looksLikeEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+
+/** Why "Connect" can't be pressed yet (null when it can). */
+export function connectHint(email: string, password: string): string | null {
+  const code = cleanAppPassword(password);
+  if (!email.trim() || !code) return "Enter both fields to continue";
+  if (!looksLikeEmail(email)) return "Enter your full Gmail address, for example name@gmail.com";
+  if (code.length !== APP_PASSWORD_LENGTH) return `${code.length} of ${APP_PASSWORD_LENGTH} letters`;
+  return null;
+}
+
+/** A browser sign-in that hasn't come back after this long is stopped, so the screen never stays stuck. */
+export const SIGN_IN_TIMEOUT_MS = 2 * 60 * 1000;

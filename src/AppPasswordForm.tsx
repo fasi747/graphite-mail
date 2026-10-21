@@ -1,17 +1,25 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Acct, APP_PASSWORD_LENGTH, cleanAppPassword, looksLikeEmail } from "./accounts";
+import { Acct, cleanAppPassword, connectHint } from "./accounts";
 
 const APP_PASSWORDS_URL = "https://myaccount.google.com/apppasswords";
 
-/** Adds Gmail with a Google app password (IMAP + SMTP). Both servers are checked before anything is saved. */
+/** Adds Gmail with a Google app password (IMAP + SMTP). Both servers are checked before anything is saved.
+ *  It scrolls itself into view and puts the cursor in the address field when it opens. */
 export default function AppPasswordForm({ onAdded, onCancel }: { onAdded: (a: Acct) => void; onCancel?: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const form = useRef<HTMLFormElement>(null);
+  const emailField = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    form.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    emailField.current?.focus({ preventScroll: true });
+  }, []);
   const code = cleanAppPassword(password);
-  const ready = looksLikeEmail(email) && code.length === APP_PASSWORD_LENGTH;
+  const hint = connectHint(email, password);
+  const ready = hint === null;
 
   async function connect(e: React.FormEvent) {
     e.preventDefault();
@@ -26,7 +34,7 @@ export default function AppPasswordForm({ onAdded, onCancel }: { onAdded: (a: Ac
   }
 
   return (
-    <form className="form apppw" onSubmit={connect}>
+    <form ref={form} className="form apppw" onSubmit={connect} aria-label="Gmail with an app password">
       <b>Gmail with an app password</b>
       <ol className="muted apppw-help">
         <li>Your Google account needs <b>2-Step Verification</b> switched on.</li>
@@ -36,20 +44,18 @@ export default function AppPasswordForm({ onAdded, onCancel }: { onAdded: (a: Ac
         <li>Paste the 16-letter code below. Spaces are removed for you.</li>
       </ol>
       <label>Gmail address
-        <input type="email" autoComplete="username" placeholder="name@gmail.com" value={email} disabled={busy} onChange={(e) => setEmail(e.target.value)} />
+        <input ref={emailField} type="email" autoComplete="username" placeholder="name@gmail.com" value={email} disabled={busy} onChange={(e) => setEmail(e.target.value)} />
       </label>
       <label>App password
         <input type="password" autoComplete="off" spellCheck={false} placeholder="abcd efgh ijkl mnop" value={password} disabled={busy}
           onChange={(e) => setPassword(e.target.value)} />
       </label>
-      {password && code.length !== APP_PASSWORD_LENGTH && (
-        <div className="muted" style={{ fontSize: 12 }}>{code.length} of {APP_PASSWORD_LENGTH} letters</div>
-      )}
       <div className="muted" style={{ fontSize: 12 }}>The app password is kept in your system keyring, not in Graphite Mail's files. You can revoke it at any time on the same Google page.</div>
       <div className="rowbtns">
-        <button className="primary" type="submit" disabled={!ready || busy}>{busy ? "Checking with Gmail…" : "Connect"}</button>
+        <button className="primary" type="submit" disabled={!ready || busy} aria-describedby={hint ? "apppw-hint" : undefined}>{busy ? "Checking with Gmail…" : "Connect"}</button>
         {onCancel && <button type="button" disabled={busy} onClick={onCancel}>Cancel</button>}
       </div>
+      {hint && !busy && <div id="apppw-hint" className="muted apppw-hint">{hint}</div>}
       {error && <div className="error" role="alert">{error}</div>}
     </form>
   );
