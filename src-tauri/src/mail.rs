@@ -99,7 +99,33 @@ pub fn messages(folder_id: &str, offset: i64, limit: i64) -> Result<Vec<MessageR
     })
 }
 
+/// "with:a@x.com" (or several, comma-separated): mail from or to those addresses (sender, To or Cc).
+pub fn with_address(addresses: &[String], limit: i64) -> Result<Vec<MessageRow>> {
+    let addrs: Vec<String> = addresses.iter().map(|a| a.trim().to_lowercase()).filter(|a| a.contains('@')).collect();
+    if addrs.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut cond = vec![];
+    for i in 1..=addrs.len() {
+        // Addresses are stored quoted inside the recipients' JSON: match the whole quoted address.
+        cond.push(format!(
+            "(lower(m.sender_address)=?{i} OR instr(lower(m.to_recipients_json), '\"' || ?{i} || '\"')>0 OR instr(lower(m.cc_recipients_json), '\"' || ?{i} || '\"')>0)"
+        ));
+    }
+    storage::with_db(|db| {
+        let mut st = db.prepare(&format!(
+            "SELECT {ROW_COLS} FROM {ROW_FROM} WHERE {} ORDER BY m.received_at DESC LIMIT {limit}",
+            cond.join(" OR ")
+        ))?;
+        let rows = st.query_map(rusqlite::params_from_iter(addrs.iter()), map_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    })
+}
+
 pub fn search(q: &str, limit: i64) -> Result<Vec<MessageRow>> {
+    if let Some(list) = q.trim().strip_prefix("with:") {
+        return with_address(&list.split([',', ';', ' ']).map(String::from).collect::<Vec<_>>(), limit);
+    }
     // Quote each term so user input can't break FTS5 syntax; prefix-match the last term.
     let terms: Vec<String> = q
         .split_whitespace()
@@ -219,6 +245,33 @@ mod tests {
         assert_eq!(search("capex", 10).unwrap()[0].id, "m1");
         assert_eq!(search("bud", 10).unwrap().len(), 1); // prefix match
         assert!(search("\"broken( query", 10).is_ok()); // hostile input is safe
+    }
+
+    #[test]
+    fn mail_with_an_address() {
+        let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("gm-with-{}", uuid::Uuid::new_v4()));
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
+        storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
+        storage::with_db(|db| {
+            db.execute_batch(
+                r#"INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','me@x.com','Me',0);
+                 INSERT INTO folders(id,account_id,remote_id,display_name) VALUES('f','a','rf','Inbox');
+                 INSERT INTO messages(id,account_id,folder_id,remote_id,subject,sender_address,to_recipients_json,cc_recipients_json,received_at) VALUES
+                   ('from','a','f','r1','From Ana','Ana@Corp.com','[{"name":"Me","address":"me@x.com"}]','[]',100),
+                   ('to','a','f','r2','To Ana','me@x.com','[{"name":"Ana","address":"ana@corp.com"}]','[]',200),
+                   ('cc','a','f','r3','Cc Ana','bob@y.com','[]','[{"name":"Ana D","address":"ANA@corp.com"}]',300),
+                   ('near','a','f','r4','Not Ana','hana@corp.com','[{"name":"x","address":"ana@corp.com.evil"}]','[{"name":"y","address":"banana@corp.com"}]',400),
+                   ('other','a','f','r5','Bob','bob@y.com','[{"name":"Me","address":"me@x.com"}]','[]',500);"#,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let ids = |q: &str| search(q, 50).unwrap().into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(ids("with:ana@corp.com"), vec!["cc", "to", "from"], "from, to or cc, newest first, any letter case, whole addresses only");
+        assert_eq!(ids("with:ana@corp.com,bob@y.com"), vec!["other", "cc", "to", "from"], "several addresses");
+        assert!(ids("with:").is_empty());
+        assert!(ids("with:' OR 1=1 --").is_empty(), "no address, no results (and no SQL from the search box)");
     }
 
     #[test]

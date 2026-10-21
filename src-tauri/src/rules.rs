@@ -300,6 +300,25 @@ pub async fn block_sender(message_id: &str) -> Result<String> {
     Ok(sender)
 }
 
+/// Blocks an address for one account (e.g. from the Contacts view): the same rule as Block sender.
+pub async fn block_address(account: &str, address: &str) -> Result<String> {
+    let sender = address.trim().to_string();
+    if !is_address(&sender) {
+        bail!("“{sender}” is not an email address.");
+    }
+    let junk: String = storage::with_db(|db| {
+        db.query_row(
+            "SELECT f.id FROM folders f JOIN accounts a ON a.id=f.account_id WHERE lower(a.email)=lower(?1) AND f.well_known_name='junkemail'",
+            [account],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(anyhow!("This account has no Junk folder yet. Try again after the next sync."))
+    })?;
+    create(Rule { account: account.to_string(), name: format!("Block {sender}"), enabled: true, from: sender.clone(), move_to: Some(junk), ..Default::default() }).await?;
+    Ok(sender)
+}
+
 pub async fn update(rule: Rule) -> Result<()> {
     let id = rule.id.clone().ok_or(anyhow!("Missing rule id"))?;
     let old = load(&id)?;

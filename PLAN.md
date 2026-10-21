@@ -81,3 +81,9 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Separate consent (Contacts.Read People.Read User.ReadBasic.All) with Grant access; mail/calendar unaffected if it's missing or withdrawn
 - [x] Local only, never logged; Remove cached contacts; deleted with the account
 - [ ] Tested with a real Microsoft 365 tenant
+
+## v1.10.1 — Contacts right-click menu
+- [x] Single-contact menu (email, meeting, mail search, copy, phone, favourites, vCard, block, rule) with address/phone submenus
+- [x] Multi-select (Ctrl/Shift-click, checkboxes, Ctrl+A) and its menu
+- [x] Favourites group (local, per account); vCard 3.0 export; `with:` mail search by address
+- [x] Submenus in the shared context menu (keyboard + mouse, kept on screen)

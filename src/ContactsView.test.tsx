@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ContactsView, { ContactDetail, ContactRow, ContactStatus, Overview, statusNote } from "./ContactsView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(async () => "/home/me/Ana Diaz.vcf") }));
 const mocked = vi.mocked(invoke);
 
 const ms = { email: "me@corp.com", display_name: "Me", provider: "microsoft" };
@@ -89,7 +90,7 @@ describe("Contacts view", () => {
     await waitFor(() => expect(within(pane).getByRole("heading", { name: "Ana Diaz" })).toBeTruthy());
     for (const t of ["ana@corp.com", "a.diaz@corp.com", "+1 555 0100", "HQ 4", "Contoso", "Finance"]) expect(within(pane).getAllByText(new RegExp(t.replace(/[+.]/g, "\\$&"))).length).toBeGreaterThan(0);
     fireEvent.click(within(pane).getByRole("button", { name: /New email/ }));
-    expect(onNewEmail).toHaveBeenCalledWith("ana@corp.com", "me@corp.com");
+    expect(onNewEmail).toHaveBeenCalledWith(["ana@corp.com"], "me@corp.com");
     await act(async () => { fireEvent.click(within(pane).getByRole("button", { name: /Copy email/ })); });
     expect(writeText).toHaveBeenCalledWith("ana@corp.com");
     expect(onToast).toHaveBeenCalledWith("Email address copied");
@@ -131,5 +132,151 @@ describe("Contacts view", () => {
     expect(statusNote({ ...ok, directory: "blocked" })?.grant).toBe(true);
     expect(statusNote({ ...ok, personal: "removed", directory: "removed" })?.grant).toBe(false);
     expect(statusNote({ ...ok, personal: "error" })?.text).toMatch(/offline/);
+  });
+});
+
+// ---------------------------------------------------------------- right-click menu, multi-select, favourites
+
+const person = (id: string, name: string, emails: string[], phones: { kind: string; number: string }[] = [], favourite = false): ContactDetail =>
+  ({ id, source: id.startsWith("p") ? "personal" : "directory", account_email: "me@corp.com", folder: null, name, emails, phones, job_title: null, department: null, office: null, company: null, favourite });
+const PEOPLE: Record<string, ContactDetail> = {
+  d1: person("d1", "Ana Diaz", ["ana@corp.com", "a.diaz@corp.com"], [{ kind: "work", number: "+1 555 0100" }]),
+  d2: person("d2", "Ben Ode", ["ben@corp.com"]),
+  d3: person("d3", "Room 4.01", []),
+  p1: person("p1", "Anna Bell", ["anna@home.com"], [], true),
+};
+const LIST: ContactRow[] = [
+  row("d1", "Ana Diaz", "directory", "ana@corp.com"), row("d2", "Ben Ode", "directory", "ben@corp.com"),
+  { ...row("d3", "Room 4.01", "directory", ""), email: null }, { ...row("p1", "Anna Bell", "personal", "anna@home.com"), favourite: true },
+];
+function people(favourites = true) {
+  mocked.mockImplementation(async (cmd: string, args?: any) => {
+    switch (cmd) {
+      case "contacts_overview": {
+        const of = (s: string) => { const rows = LIST.filter((r) => r.source === s); return { total: rows.length, rows }; };
+        const fav = favourites ? LIST.filter((r) => r.favourite) : [];
+        return { favourites: { total: fav.length, rows: fav }, directory: of("directory"), personal: of("personal"), accounts: [ok] };
+      }
+      case "contact_detail": return PEOPLE[args.id];
+      case "contact_details": return args.ids.map((id: string) => PEOPLE[id]);
+      case "export_vcards": return args.ids.length;
+      default: return null;
+    }
+  });
+}
+const handlers = () => ({ onNewEmail: vi.fn(), onNewMeeting: vi.fn(), onSearchMail: vi.fn(), onBlock: vi.fn(), onCreateRule: vi.fn(), onToast: vi.fn() });
+const rowOf = (name: string) => screen.getAllByRole("option").find((o) => o.textContent?.includes(name) && o.closest("[aria-label='Directory list'], [aria-label='My contacts list']"))!;
+const menuLabels = () => within(screen.getByRole("menu", { name: "Contact actions" })).getAllByRole("menuitem").map((m) => m.textContent!.replace("›", "").trim());
+
+describe("Contacts right-click menu", () => {
+  it("selects the contact first and offers its actions, with a submenu for several addresses", async () => {
+    people();
+    const h = handlers();
+    render(<ContactsView accounts={[ms]} {...h} />);
+    await screen.findByText("Ben Ode");
+    fireEvent.contextMenu(rowOf("Ana Diaz"), { clientX: 50, clientY: 60 });
+    await screen.findByRole("menu", { name: "Contact actions" });
+    expect(rowOf("Ana Diaz").getAttribute("aria-selected")).toBe("true");
+    expect(menuLabels()).toEqual(["New email", "New meeting", "Search mail with this person", "Copy email address", "Copy name and address",
+      "Copy phone number", "Add to favourites", "Export as vCard…", "Block sender", "Create rule for this sender…"]);
+    const newEmail = screen.getByRole("menuitem", { name: /New email/ });
+    expect(newEmail.getAttribute("aria-haspopup")).toBe("menu");
+    fireEvent.mouseEnter(newEmail);
+    fireEvent.click(within(screen.getByRole("menu", { name: "New email" })).getByRole("menuitem", { name: "a.diaz@corp.com" }));
+    expect(h.onNewEmail).toHaveBeenCalledWith(["a.diaz@corp.com"], "me@corp.com");
+    expect(screen.queryByRole("menu", { name: "Contact actions" })).toBeNull();
+  });
+
+  it("hides email items for a contact without an address", async () => {
+    people();
+    render(<ContactsView accounts={[ms]} {...handlers()} />);
+    await screen.findByText("Room 4.01");
+    fireEvent.contextMenu(rowOf("Room 4.01"));
+    await screen.findByRole("menu", { name: "Contact actions" });
+    expect(menuLabels()).toEqual(["Add to favourites", "Export as vCard…"]);
+  });
+
+  it("searches mail, blocks and makes rules through the app, and exports a vCard", async () => {
+    people();
+    const h = handlers();
+    render(<ContactsView accounts={[ms]} {...h} />);
+    await screen.findByText("Ben Ode");
+    const run = async (name: string, item: RegExp) => {
+      fireEvent.contextMenu(rowOf(name));
+      fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+    };
+    await run("Ana Diaz", /Search mail with this person/);
+    expect(h.onSearchMail).toHaveBeenCalledWith(["ana@corp.com", "a.diaz@corp.com"]);
+    await run("Ben Ode", /Block sender/);
+    expect(h.onBlock).toHaveBeenCalledWith("me@corp.com", "ben@corp.com");
+    await run("Ben Ode", /Create rule for this sender/);
+    expect(h.onCreateRule).toHaveBeenCalledWith("me@corp.com", "ben@corp.com");
+    await run("Ben Ode", /New meeting/);
+    expect(h.onNewMeeting).toHaveBeenCalledWith(["ben@corp.com"], "me@corp.com");
+    await run("Ben Ode", /Export as vCard/);
+    await waitFor(() => expect(calls("export_vcards")[0][1]).toEqual({ ids: ["d2"], path: "/home/me/Ana Diaz.vcf" }));
+    await run("Ben Ode", /Add to favourites/);
+    await waitFor(() => expect(calls("set_contact_favourite")[0][1]).toEqual({ id: "d2", on: true }));
+  });
+
+  it("selects with Ctrl+click, Shift+click and Ctrl+A, and offers group actions", async () => {
+    people();
+    const h = handlers();
+    render(<ContactsView accounts={[ms]} {...h} />);
+    await screen.findByText("Ben Ode");
+    fireEvent.click(rowOf("Ana Diaz"));
+    fireEvent.click(rowOf("Anna Bell"), { ctrlKey: true });
+    expect(screen.getByText("2 contacts selected")).toBeTruthy();
+    fireEvent.contextMenu(rowOf("Anna Bell"));
+    await screen.findByRole("menu", { name: "Contact actions" });
+    expect(menuLabels()).toEqual(["New email to all (2)", "New meeting with all (2)", "Copy all addresses", "Export selected as vCard (2)…"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: /New email to all/ }));
+    expect(h.onNewEmail).toHaveBeenCalledWith(["anna@home.com", "ana@corp.com"], "me@corp.com");
+    // Shift+click: a range in list order (favourites first, then the directory).
+    fireEvent.click(rowOf("Ben Ode"));
+    fireEvent.click(rowOf("Room 4.01"), { shiftKey: true });
+    expect(screen.getByText("2 contacts selected")).toBeTruthy();
+    // Ctrl+A in the list selects everyone shown (a favourite listed twice counts once); Esc clears.
+    const list = screen.getByLabelText("Contact list");
+    fireEvent.keyDown(list, { key: "a", ctrlKey: true });
+    expect(screen.getByText("4 contacts selected")).toBeTruthy();
+    fireEvent.keyDown(list, { key: "Escape" });
+    expect(screen.queryByText(/contacts selected/)).toBeNull();
+    // The hover checkbox adds to the selection like Ctrl+click.
+    fireEvent.click(rowOf("Ana Diaz"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Ben Ode" }));
+    expect(screen.getByText("2 contacts selected")).toBeTruthy();
+  });
+
+  it("opens with the keyboard (Shift+F10) and closes with Esc", async () => {
+    people();
+    render(<ContactsView accounts={[ms]} {...handlers()} />);
+    await screen.findByText("Ben Ode");
+    fireEvent.click(rowOf("Ben Ode"));
+    fireEvent.keyDown(screen.getByLabelText("Contact list"), { key: "F10", shiftKey: true });
+    const menu = await screen.findByRole("menu", { name: "Contact actions" });
+    expect(document.activeElement?.textContent).toContain("New email");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toContain("New meeting");
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("shows favourites in their own group at the top, and only when there are some", async () => {
+    people();
+    const { unmount } = render(<ContactsView accounts={[ms]} {...handlers()} />);
+    await screen.findByText("Ben Ode");
+    const groups = screen.getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Favourites", "Directory", "My contacts"]);
+    const fav = screen.getByRole("group", { name: "Favourites" });
+    expect(within(fav).getByRole("button", { name: /Favourites\s*1/ })).toBeTruthy();
+    expect(within(fav).getByText("Anna Bell")).toBeTruthy();
+    fireEvent.contextMenu(within(fav).getByText("Anna Bell"));
+    expect(await screen.findByRole("menuitem", { name: /Remove from favourites/ })).toBeTruthy();
+    unmount();
+    people(false);
+    render(<ContactsView accounts={[ms]} {...handlers()} />);
+    await screen.findByText("Ben Ode");
+    expect(screen.queryByRole("group", { name: "Favourites" })).toBeNull();
   });
 });

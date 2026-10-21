@@ -124,6 +124,19 @@ Click a group's name to fold it.
   at Microsoft); Refresh contacts brings them back. Removing the account deletes them too.
 - Gmail accounts have no Contacts group.
 
+**Right-click a contact** (or press Shift+F10 / the menu key) for: **New email**, **New meeting** (an event with them
+invited, in that account's calendar), **Search mail with this person** (mail from or to their addresses, searched on this
+computer; the search box shows `with:address`), **Copy email address**, **Copy name and address**, **Copy phone number**,
+**Add to / Remove from favourites**, **Export as vCard…**, **Block sender** and **Create rule for this sender…**.
+When a contact has several addresses or phone numbers, a submenu lets you choose. Items that need an address are left
+out for contacts without one.
+
+- **Favourites** are kept on this computer for each account and shown in their own group at the top of the list.
+- **Selecting several:** Ctrl+click, Shift+click for a range, the checkbox that appears on hover, or Ctrl+A in the list
+  (Esc clears). Right-click the selection for **New email to all**, **New meeting with all**, **Copy all addresses**
+  (separated by semicolons) and **Export selected as vCard**.
+- **vCard files** (.vcf, version 3.0) open in most address books and phones.
+
 ## Everyday use
 
 | To do this | Do this |

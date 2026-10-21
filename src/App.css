@@ -452,6 +452,10 @@ h1, h2, .toolbar .title b, .brand-name, .sheet-bar b, .form > b { font-family: v
 .ctxmenu div.focus { background: var(--selected); color: var(--selected-text); outline: none; }
 .ctxmenu div.off { opacity: .45; }
 .ctx-ico { width: 16px; display: inline-grid; place-items: center; }
+.ctxmenu { overflow-y: auto; }
+.ctxmenu .ctx-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+.ctxmenu .ctx-more { margin-left: 12px; opacity: .7; }
+.ctxmenu div[aria-expanded="true"]:not(.focus) { background: var(--hover); }
 .pickerlist { max-height: 300px; overflow-y: auto; border: 1px solid var(--separator); border-radius: 10px; padding: 4px; }
 .pickerlist div { padding: 6px 10px; border-radius: 6px; cursor: default; }
 .pickerlist div.on { background: var(--selected); color: var(--selected-text); }
@@ -482,7 +486,13 @@ button.toggled { background: color-mix(in srgb, var(--accent) 16%, var(--field))
 .cgroup-head .cgroup-name { flex: 1; }
 .cgroup-head .chev { width: 12px; color: var(--text-secondary); }
 .cgroup-head .count { color: var(--text-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
-.crow { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; }
+.crow { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 24px; border-radius: 10px; position: relative; }
+.ccheck { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; margin: 0; opacity: 0; accent-color: var(--accent); }
+.crow:hover .ccheck, .crow .ccheck:checked, .crow .ccheck:focus-visible, .scroller.picking .ccheck { opacity: 1; }
+.crow.active .ccheck { accent-color: var(--selected-text); }
+.cstar { color: #e0a800; }
+.crow.active .cstar { color: inherit; }
+.contacts-list .scroller:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -2px; }
 .crow:hover { background: var(--hover); }
 .crow.active { background: var(--selected); color: var(--selected-text); }
 .crow.active .csub { color: inherit; opacity: .85; }

@@ -7,7 +7,8 @@ Built with Tauri (Rust) + React. Uses Microsoft Graph, the Gmail / Google Calend
 
 - Microsoft 365 **and Gmail**, several accounts at once, with an **All Inboxes** view
 - Gmail either through Google sign-in or with a **Google app password** (IMAP/SMTP, no Google sign-in client needed)
-- **Contacts** for Microsoft 365: your organisation's directory and your own contacts, searchable offline, and suggested in To/Cc
+- **Contacts** for Microsoft 365: your organisation's directory and your own contacts, searchable offline, and suggested in To/Cc;
+  right-click for email, meetings, mail search, favourites, vCard export, block / rule; multi-select
 - Full offline reading and search of your mailbox
 - Read, flag, move, delete, reply and send while offline — changes sync when you reconnect
 - You choose where your mail data is stored, and can move it safely later (crash-proof, verified copy)

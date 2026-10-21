@@ -25,8 +25,12 @@ function backend(accounts: object[]) {
         personal: { total: 0, rows: [] },
         accounts: [{ email: "me@corp.com", granted: true, directory: "ok", personal: "ok", directory_count: 1, personal_count: 0, last_sync: 1 }],
       };
+      case "contact_details": return [{ id: "d1", source: "directory", account_email: "me@corp.com", folder: null, name: "Ana Diaz", emails: ["ana@corp.com"], phones: [],
+        job_title: "CFO", department: null, office: null, company: null, favourite: false }];
+      case "list_calendars": return [{ id: "cal1", name: "Calendar", color: "#0a84ff", is_primary: true, can_edit: true, account_email: "me@corp.com", provider: "microsoft" }];
       case "pending_actions": return 0;
       case "sync_now": return { folders: 0, messages_changed: 0, bodies_downloaded: 0, replayed: 0, events: 0 };
+      case "search_messages": return [];
       default: return /^(list|pending|search)/.test(String(cmd)) ? [] : null;
     }
   });
@@ -58,5 +62,21 @@ describe("Contacts tab", () => {
     await waitFor(() => expect(mocked).toHaveBeenCalledWith("list_accounts"));
     fireEvent.click(screen.getByText("Contacts", { selector: ".sidebar .name" }));
     expect(await screen.findByText("Contacts are available for Microsoft 365 accounts.")).toBeTruthy();
+  });
+
+  it("searches mail with a contact and starts a meeting with them from the right-click menu", async () => {
+    backend([{ email: "me@corp.com", display_name: "Me", provider: "microsoft" }]);
+    render(<Mailbox account={{ email: "me@corp.com", display_name: "Me" }} onSignOut={() => {}} />);
+    fireEvent.click(screen.getByText("Contacts", { selector: ".sidebar .name" }));
+    fireEvent.contextMenu(await screen.findByText("Ana Diaz"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Search mail with this person/ }));
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("search_messages", { query: "with:ana@corp.com" }));
+    expect((screen.getByPlaceholderText("Search") as HTMLInputElement).value).toBe("with:ana@corp.com");
+    expect(screen.getByText("Mail with ana@corp.com")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Contacts", { selector: ".sidebar .name" }));
+    fireEvent.contextMenu(await screen.findByText("Ana Diaz"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /New meeting/ }));
+    expect(await screen.findByDisplayValue("ana@corp.com")).toBeTruthy(); // the invitee is filled in
   });
 });

@@ -18,6 +18,7 @@ use std::time::Duration;
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
 pub const DIRECTORY: &str = "directory";
 pub const PERSONAL: &str = "personal";
+pub const FAVOURITES: &str = "favourites";
 
 /// How often the background sync looks again (the "Refresh contacts" button always does).
 const PERSONAL_EVERY: i64 = 30 * 60;
@@ -29,8 +30,8 @@ const MAX_WAIT_SECS: u64 = 60;
 /// The UI shows at most this many rows per group; searching narrows the list.
 pub const LIST_LIMIT: i64 = 500;
 
-const USER_FULL: &str = "id,displayName,mail,jobTitle,department,officeLocation,companyName,businessPhones,mobilePhone,accountEnabled";
-const USER_BASIC: &str = "id,displayName,mail";
+const USER_FULL: &str = "id,displayName,givenName,surname,mail,jobTitle,department,officeLocation,companyName,businessPhones,mobilePhone,accountEnabled";
+const USER_BASIC: &str = "id,displayName,givenName,surname,mail";
 const CONTACT_FIELDS: &str = "id,displayName,givenName,surname,emailAddresses,businessPhones,homePhones,mobilePhone,jobTitle,department,officeLocation,companyName";
 
 fn graph() -> String {
@@ -144,6 +145,8 @@ fn state_del(account_id: &str, key: &str) -> Result<()> {
 #[derive(Default, Debug, PartialEq)]
 struct Entry {
     name: String,
+    given_name: Option<String>,
+    surname: Option<String>,
     emails: Vec<String>,
     /// (kind, number): "work", "mobile", "home"
     phones: Vec<(String, String)>,
@@ -182,6 +185,8 @@ fn from_user(u: &Value) -> Option<Entry> {
     phones(&u["mobilePhone"], "mobile", &mut ph);
     Some(Entry {
         name: text(&u["displayName"]).unwrap_or_else(|| mail.clone()),
+        given_name: text(&u["givenName"]),
+        surname: text(&u["surname"]),
         emails: vec![mail],
         phones: ph,
         job_title: text(&u["jobTitle"]),
@@ -201,6 +206,8 @@ fn from_contact(c: &Value) -> Entry {
     let name = text(&c["displayName"]).or(Some(joined).filter(|s| !s.is_empty())).or_else(|| emails.first().cloned()).unwrap_or_else(|| "(no name)".into());
     Entry {
         name,
+        given_name: text(&c["givenName"]),
+        surname: text(&c["surname"]),
         emails,
         phones: ph,
         job_title: text(&c["jobTitle"]),
@@ -220,14 +227,15 @@ fn search_text(e: &Entry) -> String {
 fn upsert(db: &rusqlite::Connection, account_id: &str, source: &str, remote_id: &str, folder: Option<(&str, &str)>, e: &Entry, generation: i64) -> Result<()> {
     let phones: Vec<Value> = e.phones.iter().map(|(k, n)| serde_json::json!({ "kind": k, "number": n })).collect();
     db.execute(
-        "INSERT INTO contacts(id,account_id,source,remote_id,folder_id,folder_name,display_name,emails_json,phones_json,job_title,department,office,company,search_text,sync_gen)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+        "INSERT INTO contacts(id,account_id,source,remote_id,folder_id,folder_name,display_name,emails_json,phones_json,job_title,department,office,company,search_text,sync_gen,given_name,surname)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
          ON CONFLICT(account_id,source,remote_id) DO UPDATE SET folder_id=excluded.folder_id, folder_name=excluded.folder_name,
-           display_name=excluded.display_name, emails_json=excluded.emails_json, phones_json=excluded.phones_json, job_title=excluded.job_title,
+           display_name=excluded.display_name, given_name=excluded.given_name, surname=excluded.surname, emails_json=excluded.emails_json, phones_json=excluded.phones_json, job_title=excluded.job_title,
            department=excluded.department, office=excluded.office, company=excluded.company, search_text=excluded.search_text, sync_gen=excluded.sync_gen",
         params![
             uuid::Uuid::new_v4().to_string(), account_id, source, remote_id, folder.map(|f| f.0), folder.map(|f| f.1), e.name,
-            serde_json::to_string(&e.emails)?, Value::Array(phones).to_string(), e.job_title, e.department, e.office, e.company, search_text(e), generation
+            serde_json::to_string(&e.emails)?, Value::Array(phones).to_string(), e.job_title, e.department, e.office, e.company, search_text(e), generation,
+            e.given_name, e.surname
         ],
     )?;
     Ok(())
@@ -563,6 +571,7 @@ pub struct Row {
     pub email: Option<String>,
     /// Job title, or the department / company when there is no title.
     pub subtitle: Option<String>,
+    pub favourite: bool,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -585,6 +594,8 @@ pub struct AccountStatus {
 
 #[derive(Serialize, Debug)]
 pub struct Overview {
+    /// Favourite contacts (also listed in their own group).
+    pub favourites: Group,
     pub directory: Group,
     pub personal: Group,
     pub accounts: Vec<AccountStatus>,
@@ -609,6 +620,9 @@ pub struct Detail {
     pub department: Option<String>,
     pub office: Option<String>,
     pub company: Option<String>,
+    pub given_name: Option<String>,
+    pub surname: Option<String>,
+    pub favourite: bool,
 }
 
 /// Microsoft accounts (rows of the accounts table): (id, email).
@@ -627,9 +641,13 @@ fn terms(query: &str) -> Vec<String> {
     query.to_lowercase().split_whitespace().map(String::from).collect()
 }
 
+const IS_FAVOURITE: &str = "EXISTS (SELECT 1 FROM contact_favourites f WHERE f.account_id=c.account_id AND f.source=c.source AND f.remote_id=c.remote_id)";
+
+/// One group of the list: "directory", "personal", or "favourites" (both sources, favourites only).
 fn group(source: &str, query: &str, account: Option<&str>, limit: i64) -> Result<Group> {
     let t = terms(query);
-    let mut filter = String::from("c.source=?1 AND COALESCE(a.provider,'microsoft')='microsoft' AND (?2 IS NULL OR lower(a.email)=lower(?2))");
+    let which = if source == FAVOURITES { format!("{IS_FAVOURITE} AND ?1 IS NOT NULL") } else { "c.source=?1".to_string() };
+    let mut filter = format!("{which} AND COALESCE(a.provider,'microsoft')='microsoft' AND (?2 IS NULL OR lower(a.email)=lower(?2))");
     for i in 0..t.len() {
         filter.push_str(&format!(" AND instr(c.search_text, ?{}) > 0", i + 3));
     }
@@ -641,13 +659,13 @@ fn group(source: &str, query: &str, account: Option<&str>, limit: i64) -> Result
         let from = "contacts c JOIN accounts a ON a.id=c.account_id";
         let total: i64 = db.query_row(&format!("SELECT COUNT(*) FROM {from} WHERE {filter}"), rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
         let mut st = db.prepare(&format!(
-            "SELECT c.id, c.source, a.email, c.display_name, c.emails_json, COALESCE(c.job_title, c.department, c.company)
+            "SELECT c.id, c.source, a.email, c.display_name, c.emails_json, COALESCE(c.job_title, c.department, c.company), {IS_FAVOURITE}
              FROM {from} WHERE {filter} ORDER BY c.display_name COLLATE NOCASE, c.id LIMIT {limit}"
         ))?;
         let rows = st
             .query_map(rusqlite::params_from_iter(args.iter()), |r| {
                 let emails: Vec<String> = serde_json::from_str(&r.get::<_, String>(4)?).unwrap_or_default();
-                Ok(Row { id: r.get(0)?, source: r.get(1)?, account_email: r.get(2)?, name: r.get(3)?, email: emails.into_iter().next(), subtitle: r.get(5)? })
+                Ok(Row { id: r.get(0)?, source: r.get(1)?, account_email: r.get(2)?, name: r.get(3)?, email: emails.into_iter().next(), subtitle: r.get(5)?, favourite: r.get(6)? })
             })?
             .filter_map(|r| r.ok())
             .collect();
@@ -680,14 +698,15 @@ pub fn statuses(account: Option<&str>) -> Result<Vec<AccountStatus>> {
 
 /// What the Contacts view shows: both groups (filtered by the search and the account), and each account's state.
 pub fn overview(query: &str, account: Option<&str>) -> Result<Overview> {
-    Ok(Overview { directory: group(DIRECTORY, query, account, LIST_LIMIT)?, personal: group(PERSONAL, query, account, LIST_LIMIT)?, accounts: statuses(account)? })
+    Ok(Overview { favourites: group(FAVOURITES, query, account, LIST_LIMIT)?, directory: group(DIRECTORY, query, account, LIST_LIMIT)?, personal: group(PERSONAL, query, account, LIST_LIMIT)?, accounts: statuses(account)? })
 }
 
 pub fn detail(id: &str) -> Result<Detail> {
     storage::with_db(|db| {
         db.query_row(
-            "SELECT c.id, c.source, a.email, c.folder_name, c.display_name, c.emails_json, c.phones_json, c.job_title, c.department, c.office, c.company
-             FROM contacts c JOIN accounts a ON a.id=c.account_id WHERE c.id=?1",
+            &format!("SELECT c.id, c.source, a.email, c.folder_name, c.display_name, c.emails_json, c.phones_json, c.job_title, c.department, c.office, c.company,
+                    c.given_name, c.surname, {IS_FAVOURITE}
+             FROM contacts c JOIN accounts a ON a.id=c.account_id WHERE c.id=?1"),
             [id],
             |r| {
                 let phones: Vec<Value> = serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
@@ -703,12 +722,110 @@ pub fn detail(id: &str) -> Result<Detail> {
                     department: r.get(8)?,
                     office: r.get(9)?,
                     company: r.get(10)?,
+                    given_name: r.get(11)?,
+                    surname: r.get(12)?,
+                    favourite: r.get(13)?,
                 })
             },
         )
         .optional()?
         .ok_or(anyhow!("That contact is no longer here."))
     })
+}
+
+/// Adds a contact to its account's favourites, or takes it off.
+pub fn set_favourite(id: &str, on: bool) -> Result<()> {
+    storage::with_db(|db| {
+        let (account, source, remote): (String, String, String) = db
+            .query_row("SELECT account_id, source, remote_id FROM contacts WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+            .ok_or(anyhow!("That contact is no longer here."))?;
+        if on {
+            db.execute("INSERT OR IGNORE INTO contact_favourites(account_id,source,remote_id) VALUES(?1,?2,?3)", params![account, source, remote])?;
+        } else {
+            db.execute("DELETE FROM contact_favourites WHERE account_id=?1 AND source=?2 AND remote_id=?3", params![account, source, remote])?;
+        }
+        Ok(())
+    })
+}
+
+// ---------------------------------------------------------------- vCard export
+
+/// Escapes a vCard 3.0 text value (RFC 2426 section 4: backslash, comma, semicolon, newline).
+fn vescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            ',' => out.push_str("\\,"),
+            ';' => out.push_str("\\;"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Folds a content line at 75 octets (continuation lines start with a space), never inside a UTF-8 character.
+fn fold(line: &str) -> String {
+    let mut out = String::new();
+    let mut width = 0;
+    for ch in line.chars() {
+        let n = ch.len_utf8();
+        if width + n > 75 {
+            out.push_str("\r\n ");
+            width = 1;
+        }
+        out.push(ch);
+        width += n;
+    }
+    out.push_str("\r\n");
+    out
+}
+
+/// One contact as a vCard 3.0.
+pub fn vcard(d: &Detail) -> String {
+    let mut lines: Vec<String> = vec!["BEGIN:VCARD".into(), "VERSION:3.0".into()];
+    // N is required: family;given;additional;prefix;suffix. Without name parts the whole name goes in "given".
+    let (family, given) = match (&d.surname, &d.given_name) {
+        (None, None) => (String::new(), d.name.clone()),
+        (s, g) => (s.clone().unwrap_or_default(), g.clone().unwrap_or_default()),
+    };
+    lines.push(format!("N:{};{};;;", vescape(&family), vescape(&given)));
+    lines.push(format!("FN:{}", vescape(&d.name)));
+    if d.company.is_some() || d.department.is_some() {
+        lines.push(format!("ORG:{};{}", vescape(d.company.as_deref().unwrap_or_default()), vescape(d.department.as_deref().unwrap_or_default())));
+    }
+    if let Some(t) = &d.job_title {
+        lines.push(format!("TITLE:{}", vescape(t)));
+    }
+    for (i, e) in d.emails.iter().enumerate() {
+        lines.push(format!("EMAIL;TYPE=INTERNET{}:{}", if i == 0 { ",PREF" } else { "" }, vescape(e)));
+    }
+    for p in &d.phones {
+        let kind = match p.kind.as_str() { "mobile" => "CELL,VOICE", "home" => "HOME,VOICE", _ => "WORK,VOICE" };
+        lines.push(format!("TEL;TYPE={kind}:{}", vescape(&p.number)));
+    }
+    if let Some(o) = &d.office {
+        lines.push(format!("X-MS-OFFICE:{}", vescape(o)));
+    }
+    lines.push("END:VCARD".into());
+    lines.iter().map(|l| fold(l)).collect()
+}
+
+/// Several contacts in one .vcf file (vCards one after another).
+pub fn vcards(ids: &[String]) -> Result<String> {
+    ids.iter().map(|id| detail(id).map(|d| vcard(&d))).collect()
+}
+
+/// Writes the contacts to `path` (chosen in the save dialog).
+pub fn export_vcards(ids: &[String], path: &str) -> Result<usize> {
+    if ids.is_empty() {
+        return Err(anyhow!("Choose at least one contact."));
+    }
+    std::fs::write(path, vcards(ids)?).map_err(|e| anyhow!("Couldn't save the file: {e}"))?;
+    Ok(ids.len())
 }
 
 #[derive(Serialize, Debug, PartialEq)]

@@ -133,7 +133,7 @@ async fn directory_is_paged_throttled_swept_and_enriched() {
     setup(&base);
     {
         let mut f = fake.lock().unwrap();
-        f.on("/users?$select=id,displayName,mail,jobTitle", vec![ok(json!({
+        f.on(&format!("/users?$select={USER_FULL}"), vec![ok(json!({
             "value": [
                 { "id": "u1", "displayName": "Ana Diaz", "mail": "ana@corp.com", "jobTitle": "CFO", "department": "Finance", "businessPhones": ["+1 555 0100"], "accountEnabled": true },
                 { "id": "u2", "displayName": "Ben Ode", "mail": "ben@corp.com", "accountEnabled": true },
@@ -167,14 +167,14 @@ async fn directory_is_paged_throttled_swept_and_enriched() {
     // Basic directory access only: the full field list is refused, the basic one works (and is remembered).
     {
         let mut f = fake.lock().unwrap();
-        f.on("/users?$select=id,displayName,mail,jobTitle", vec![(403, vec![], json!({ "error": { "code": "Authorization_RequestDenied" } }))]);
-        f.on("/users?$select=id,displayName,mail&", vec![ok(json!({ "value": [user("u1", "Ana Diaz", Some("ana@corp.com"))] }))]);
+        f.on(&format!("/users?$select={USER_FULL}"), vec![(403, vec![], json!({ "error": { "code": "Authorization_RequestDenied" } }))]);
+        f.on(&format!("/users?$select={USER_BASIC}&"), vec![ok(json!({ "value": [user("u1", "Ana Diaz", Some("ana@corp.com"))] }))]);
     }
     assert_eq!(sync_directory("a").await.unwrap(), 1);
     assert!(state_get("a", "contacts:dir_basic").is_some());
-    let before = fake.lock().unwrap().count("/users?$select=id,displayName,mail,jobTitle");
+    let before = fake.lock().unwrap().count(&format!("/users?$select={USER_FULL}"));
     sync_directory("a").await.unwrap();
-    assert_eq!(fake.lock().unwrap().count("/users?$select=id,displayName,mail,jobTitle"), before, "the refused field list isn't asked for again");
+    assert_eq!(fake.lock().unwrap().count(&format!("/users?$select={USER_FULL}")), before, "the refused field list isn't asked for again");
 }
 
 #[tokio::test]
@@ -321,5 +321,96 @@ async fn search_suggestions_removal_and_account_deletion() {
     seed();
     crate::sync::forget_account_data("me@corp.com").unwrap();
     assert_eq!(storage::with_db(|db| Ok(db.query_row("SELECT COUNT(*) FROM contacts", [], |r| r.get::<_, i64>(0))?)).unwrap(), 0);
+    unsafe { std::env::remove_var("GM_TEST_GRAPH") };
+}
+
+fn d(name: &str) -> Detail {
+    Detail {
+        id: "x".into(), source: PERSONAL.into(), account_email: "me@corp.com".into(), folder: None, name: name.into(),
+        emails: vec![], phones: vec![], job_title: None, department: None, office: None, company: None, given_name: None, surname: None, favourite: false,
+    }
+}
+
+/// Unfolds a vCard (RFC 2426: CRLF + space continues the line) into its logical lines.
+fn unfold(v: &str) -> Vec<String> {
+    v.replace("\r\n ", "").split("\r\n").filter(|l| !l.is_empty()).map(String::from).collect()
+}
+
+#[test]
+fn vcards_are_standard_3_0() {
+    let mut c = d("O'Brien, Seán; \"Jr\"");
+    c.given_name = Some("Seán".into());
+    c.surname = Some("O'Brien".into());
+    c.company = Some("Acme, Inc.".into());
+    c.department = Some("R&D; Labs".into());
+    c.job_title = Some("Lead\\Engineer\nNights".into());
+    c.office = Some("HQ 4".into());
+    c.emails = vec!["sean@acme.com".into(), "s.obrien@home.ie".into()];
+    c.phones = vec![
+        Phone { kind: "work".into(), number: "+353 1 555 0100".into() },
+        Phone { kind: "mobile".into(), number: "+353 87 555 0199".into() },
+        Phone { kind: "home".into(), number: "01 555 0123".into() },
+    ];
+    let v = vcard(&c);
+    assert!(v.starts_with("BEGIN:VCARD\r\nVERSION:3.0\r\n") && v.ends_with("END:VCARD\r\n"), "CRLF line ends: {v:?}");
+    let lines = unfold(&v);
+    for want in [
+        "N:O'Brien;Seán;;;",
+        r#"FN:O'Brien\, Seán\; "Jr""#,
+        r"ORG:Acme\, Inc.;R&D\; Labs",
+        r"TITLE:Lead\\Engineer\nNights",
+        "EMAIL;TYPE=INTERNET,PREF:sean@acme.com",
+        "EMAIL;TYPE=INTERNET:s.obrien@home.ie",
+        "TEL;TYPE=WORK,VOICE:+353 1 555 0100",
+        "TEL;TYPE=CELL,VOICE:+353 87 555 0199",
+        "TEL;TYPE=HOME,VOICE:01 555 0123",
+    ] {
+        assert!(lines.iter().any(|l| l == want), "missing {want:?} in {lines:#?}");
+    }
+    // No name parts: the whole name is the given name, so the card still has a name everywhere.
+    assert!(unfold(&vcard(&d("Dr. Patel (dentist)"))).contains(&"N:;Dr. Patel (dentist);;;".to_string()));
+    // Long lines fold at 75 octets without splitting a character.
+    let long = vcard(&d(&"Ünïcødé ".repeat(20)));
+    for raw in long.split("\r\n") {
+        assert!(raw.len() <= 75, "{} octets: {raw:?}", raw.len());
+    }
+    assert!(unfold(&long).contains(&format!("FN:{}", "Ünïcødé ".repeat(20))), "unfolds back to the same text");
+}
+
+#[tokio::test]
+async fn favourites_export_and_account_removal() {
+    let _g = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (base, _fake) = fake_graph().await;
+    let tmp = setup(&base);
+    seed();
+    let ana = group(DIRECTORY, "ana diaz", None, 5).unwrap().rows.remove(0);
+    let anna = group(PERSONAL, "anna", None, 5).unwrap().rows.remove(0);
+    assert!(!ana.favourite && overview("", None).unwrap().favourites.total == 0);
+    set_favourite(&ana.id, true).unwrap();
+    set_favourite(&anna.id, true).unwrap();
+    set_favourite(&anna.id, true).unwrap(); // twice is fine
+    let o = overview("", None).unwrap();
+    assert_eq!(o.favourites.rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), vec!["Ana Diaz", "Anna Bell"], "a group of their own, from both sources");
+    assert!(o.directory.rows.iter().find(|r| r.id == ana.id).unwrap().favourite, "still listed in its group, marked");
+    assert_eq!(overview("bell", None).unwrap().favourites.total, 1, "search applies to favourites too");
+    assert!(detail(&ana.id).unwrap().favourite);
+    // A refresh rewrites the contact; it stays a favourite (kept by its Graph id).
+    storage::with_db(|db| upsert(db, "a", DIRECTORY, "u1", None, &Entry { name: "Ana Diaz-Ruiz".into(), emails: vec!["ana@corp.com".into()], ..Default::default() }, 2)).unwrap();
+    assert_eq!(overview("", None).unwrap().favourites.rows[0].name, "Ana Diaz-Ruiz");
+    set_favourite(&anna.id, false).unwrap();
+    assert_eq!(overview("", None).unwrap().favourites.total, 1);
+
+    // Export: one file with every chosen contact.
+    let path = tmp.join("contacts.vcf");
+    assert_eq!(export_vcards(&[ana.id.clone(), anna.id.clone()], path.to_str().unwrap()).unwrap(), 2);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("BEGIN:VCARD").count(), 2);
+    assert!(text.contains("FN:Ana Diaz-Ruiz") && text.contains("EMAIL;TYPE=INTERNET,PREF:anna@home.com") && text.contains("EMAIL;TYPE=INTERNET:anna@work.com"));
+    assert!(export_vcards(&[], path.to_str().unwrap()).is_err());
+    assert!(export_vcards(&[ana.id.clone()], tmp.join("no/such/dir/x.vcf").to_str().unwrap()).unwrap_err().to_string().contains("Couldn't save"));
+
+    // Removing the account removes its favourites too.
+    crate::sync::forget_account_data("me@corp.com").unwrap();
+    assert_eq!(storage::with_db(|db| Ok(db.query_row("SELECT COUNT(*) FROM contact_favourites", [], |r| r.get::<_, i64>(0))?)).unwrap(), 0);
     unsafe { std::env::remove_var("GM_TEST_GRAPH") };
 }

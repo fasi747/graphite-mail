@@ -161,7 +161,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     setCompose({ mode: d.mode, replyTo: d.reply_to ?? undefined, from: d.from ?? undefined, to: splitAddr(d.to), cc: splitAddr(d.cc), subject: d.subject, draftId: d.id, html: d.html, attachments: d.attachments });
   };
   const [tab, setTab] = useState<RibbonTab>("home");
-  const [meetingReq, setMeetingReq] = useState({ teams: true, n: 0 });
+  const [meetingReq, setMeetingReq] = useState<{ teams: boolean; n: number; attendees?: string[]; account?: string }>({ teams: true, n: 0 });
   const [prompt, setPrompt] = useState<null | { kind: "new" | "sub" | "rename" }>(null);
   const pending = queue.filter((q) => !q.failed).length;
   const rejected = queue.filter((q) => q.failed).length;
@@ -485,7 +485,20 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     { label: "Block sender", icon: "block", onClick: () => blockSenders(targets), disabled: !targets.some((m) => m.sender_address) },
     { label: "Mark as spam", icon: "junkemail", onClick: () => markSpam(targets), disabled: inJunk },
   ];
-  const newMeeting = (teams: boolean) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1 })); };
+  const newMeeting = (teams: boolean, attendees?: string[], account?: string) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1, attendees, account })); };
+  /** Contacts → Block sender: the same server rule as blocking from a message (future mail goes to Junk). */
+  const blockAddress = async (account: string, address: string) => {
+    if (!(await ask(`Block ${address}? Their future mail to ${account} goes to Junk.`, { title: "Block sender", kind: "warning", okLabel: "Block", cancelLabel: "Cancel" }))) return;
+    try { flash(`Blocked ${await withRulesPermission(account, () => invoke<string>("block_address", { account, address }))}`); }
+    catch (e) { flash(String(e)); }
+  };
+  const ruleForAddress = (account: string, address: string) => {
+    setRuleErr("");
+    setRuleInit({ account, rule: { field: "from", text: address, action: "move", folder: "" } });
+  };
+  const searchMailWith = (addresses: string[]) => {
+    setView("mail"); setSelected(null); setFolderId(ALL); setQuery(`with:${addresses.join(",")}`);
+  };
   // A message can only be moved within its own account.
   const moveItems = folderChoices("move").map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => moveTo(targets, f) }));
   const mailTab = view === "mail";
@@ -628,12 +641,13 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       </Ribbon>
 
       {view === "calendar" && <PaneBoundary><CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} newRequest={meetingReq} /></PaneBoundary>}
-      {view === "contacts" && <PaneBoundary><ContactsView accounts={accounts} onToast={flash} onNewEmail={(to, from) => setCompose({ mode: "new", to: [to], from })} /></PaneBoundary>}
+      {view === "contacts" && <PaneBoundary><ContactsView accounts={accounts} onToast={flash} onNewEmail={(to, from) => setCompose({ mode: "new", to, from })}
+        onNewMeeting={(attendees, account) => newMeeting(true, attendees, account)} onSearchMail={searchMailWith} onBlock={blockAddress} onCreateRule={ruleForAddress} /></PaneBoundary>}
       {view === "mail" && <>
       <section className="list">
         <div className="toolbar" data-tauri-drag-region>
           <div className="title" data-tauri-drag-region>
-            <b>{query ? "Search" : folderId === ALL ? "All Inboxes" : current?.name ?? "Mail"}</b>
+            <b>{query.startsWith("with:") ? `Mail with ${query.slice(5).split(",").join(", ")}` : query ? "Search" : folderId === ALL ? "All Inboxes" : current?.name ?? "Mail"}</b>
             <span>{query ? `${msgs.length} results` : folderId === ALL ? `${allTotal} messages${allUnread ? `, ${allUnread} unread` : ""}` : current ? `${current.total} messages${current.unread ? `, ${current.unread} unread` : ""}${multi ? ` · ${current.account_email}` : ""}` : ""}</span>
           </div>
           <button className="icon" onClick={syncNow} disabled={syncing || !online} title="Get new mail"><span className={syncing ? "spin" : ""}><Icon name="refresh" /></span></button>

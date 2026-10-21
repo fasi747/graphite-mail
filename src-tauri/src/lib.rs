@@ -106,6 +106,29 @@ fn remove_cached_contacts(email: String) -> CmdResult<()> {
     contacts::remove_cached_for(&email).map_err(|e| e.to_string())
 }
 
+/// Details of several contacts at once (the right-click menu of a selection).
+#[tauri::command]
+fn contact_details(ids: Vec<String>) -> CmdResult<Vec<contacts::Detail>> {
+    ids.iter().map(|id| contacts::detail(id)).collect::<anyhow::Result<_>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_contact_favourite(id: String, on: bool) -> CmdResult<()> {
+    contacts::set_favourite(&id, on).map_err(|e| e.to_string())
+}
+
+/// Saves contacts as a vCard 3.0 file at `path` (chosen in the save dialog); returns how many.
+#[tauri::command]
+fn export_vcards(ids: Vec<String>, path: String) -> CmdResult<usize> {
+    contacts::export_vcards(&ids, &path).map_err(|e| e.to_string())
+}
+
+/// Block sender for an address (Contacts view): a rule sending its mail to Junk.
+#[tauri::command]
+async fn block_address(account: String, address: String) -> CmdResult<String> {
+    rules::block_address(&account, &address).await.map_err(|e| e.to_string())
+}
+
 /// To/Cc suggestions while writing from `account` (Microsoft accounts only).
 #[tauri::command]
 fn suggest_recipients(query: String, account: String) -> CmdResult<Vec<contacts::Suggestion>> {
@@ -557,6 +580,10 @@ pub fn run() {
             grant_contacts,
             remove_cached_contacts,
             suggest_recipients,
+            set_contact_favourite,
+            contact_details,
+            export_vcards,
+            block_address,
             cancel_sign_in,
             get_notifications,
             set_notifications,
