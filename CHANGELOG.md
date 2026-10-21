@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.11.0 — Windows
+- Graphite Mail now builds and runs on **Windows 10/11** (64-bit): an NSIS installer that installs for the current user
+  (no administrator rights), with the app icon, and that fetches the WebView2 runtime if the computer doesn't have it.
+- Secrets go to the **Windows Credential Manager** (Secret Service / GNOME Keyring / KWallet on Linux, as before).
+- Mail data defaults to `%LOCALAPPDATA%\graphite-mail` on Windows (`~/.local/share/graphite-mail` on Linux); the
+  settings pointer lives in `%APPDATA%\graphite-mail`. The folder picker builds Windows paths with backslashes.
+- Free-space check before moving the data folder works on Windows (`GetDiskFreeSpaceExW`) as well as Linux (`statvfs`).
+- Attachment file names are made safe for Windows too (`< > : " | ? *`, trailing dots/spaces, device names like CON).
+- Browser sign-in (Microsoft and Google) uses the same loopback redirect on Windows; links, attachments and
+  notifications go through Tauri's cross-platform plugins (no `xdg-open`, no D-Bus calls in the app's own code).
+- GitHub Actions: a version tag runs the tests on Linux and Windows, builds the `.deb` and the Windows installer on
+  separate runners and attaches both to a **draft** release. The Google client secret is never used there.
+
 ## 1.10.3 — Bcc
 - **Bcc** in the editor for every account type. The row is hidden until you press the **Bcc** link beside Cc (it opens
   by itself when a draft already has blind copies). Suggestions from the account's contacts work there like in To/Cc.

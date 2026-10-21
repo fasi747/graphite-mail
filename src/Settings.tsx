@@ -6,6 +6,7 @@ import { THEMES, ThemeChoice } from "./theme";
 import AppPasswordForm from "./AppPasswordForm";
 import { Acct, providerLabel } from "./accounts";
 import { SIGN_IN_CANCELLED, useBrowserSignIn } from "./signIn";
+import { dataFolderFrom } from "./paths";
 
 /** Small preview colours for each theme: sidebar, content, accent. */
 const SWATCH: Record<string, [string, string, string]> = {
@@ -79,7 +80,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
     setError(""); setMessage("");
     const picked = await open({ directory: true, title: "Choose where Graphite Mail should keep your mail" });
     if (typeof picked !== "string") return;
-    const target = picked.endsWith("graphite-mail") ? picked : `${picked}/graphite-mail`;
+    const target = dataFolderFrom(picked);
     const yes = await ask(
       `Move your mail and calendar data to:\n${target}\n\nThis can take a few minutes for a large mailbox. Your current data stays untouched until the copy has been checked.`,
       { title: "Move data folder", kind: "info", okLabel: "Move", cancelLabel: "Cancel" },

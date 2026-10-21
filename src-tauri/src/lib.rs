@@ -16,6 +16,8 @@ mod rules;
 mod storage;
 #[cfg(test)]
 mod security_tests;
+#[cfg(test)]
+mod platform_tests;
 mod sync;
 
 use auth::Account;

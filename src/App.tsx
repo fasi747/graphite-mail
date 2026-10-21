@@ -6,6 +6,7 @@ import AppPasswordForm from "./AppPasswordForm";
 import { DragBar, TrafficLights } from "./WindowControls";
 import { applyTheme, cachedChoice } from "./theme";
 import { SIGN_IN_CANCELLED, useBrowserSignIn } from "./signIn";
+import { dataFolderFrom } from "./paths";
 import "./App.css";
 
 type Account = { email: string; display_name: string };
@@ -20,7 +21,7 @@ function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () =>
 
   async function browse() {
     const picked = await open({ directory: true, defaultPath: dir, title: "Choose where Graphite Mail stores your mail" });
-    if (typeof picked === "string") setDir(picked.endsWith("graphite-mail") ? picked : `${picked}/graphite-mail`);
+    if (typeof picked === "string") setDir(dataFolderFrom(picked));
   }
 
   async function confirm() {

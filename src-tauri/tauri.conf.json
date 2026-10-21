@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Graphite Mail",
-  "version": "1.10.3",
+  "version": "1.11.0",
   "identifier": "com.fasi747.graphitemail",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -43,8 +43,8 @@
     ],
     "publisher": "Faisal Gillani",
     "category": "Productivity",
-    "shortDescription": "Offline-first Microsoft 365 mail & calendar for Linux",
-    "longDescription": "Graphite Mail is a free, open-source mail and calendar client for Microsoft 365. Read, search, reply and plan offline; changes sync when you reconnect. You choose where your mail is stored.",
+    "shortDescription": "Offline-first Microsoft 365 and Gmail mail & calendar",
+    "longDescription": "Graphite Mail is a free, open-source mail and calendar client for Microsoft 365 and Gmail, for Linux and Windows. Read, search, reply and plan offline; changes sync when you reconnect. You choose where your mail is stored.",
     "linux": {
       "deb": {
         "section": "mail",

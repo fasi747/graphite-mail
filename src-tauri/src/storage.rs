@@ -1,5 +1,6 @@
-//! Split storage: a fixed bootstrap pointer in ~/.config/graphite-mail/bootstrap.json
-//! and a user-chosen, movable data vault holding the SQLite DB and blob store.
+//! Split storage: a fixed bootstrap pointer in the per-user config folder (`~/.config/graphite-mail/bootstrap.json`
+//! on Linux, `%APPDATA%\graphite-mail\bootstrap.json` on Windows) and a user-chosen, movable data vault holding the
+//! SQLite DB and blob store.
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::Connection;
@@ -22,6 +23,11 @@ pub struct Bootstrap {
 pub(crate) static DB: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn config_dir() -> Result<PathBuf> {
+    // XDG_CONFIG_HOME wins on every platform. Linux honours it anyway; on Windows it lets the tests keep their
+    // bootstrap.json in a scratch folder instead of the real %APPDATA%.
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|x| !x.is_empty()) {
+        return Ok(PathBuf::from(x).join("graphite-mail"));
+    }
     Ok(dirs::config_dir()
         .ok_or(anyhow!("No config dir"))?
         .join("graphite-mail"))
@@ -31,8 +37,10 @@ fn bootstrap_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("bootstrap.json"))
 }
 
+/// Where mail goes unless the user picks another place: `~/.local/share/graphite-mail` on Linux,
+/// `%LOCALAPPDATA%\graphite-mail` on Windows (local, not roaming: a mailbox can be gigabytes).
 pub fn default_data_dir() -> String {
-    dirs::data_dir()
+    dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("graphite-mail")
         .to_string_lossy()

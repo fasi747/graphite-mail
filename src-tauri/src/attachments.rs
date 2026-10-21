@@ -157,10 +157,18 @@ pub fn risky(name: &str) -> bool {
         .any(|e| n.ends_with(e))
 }
 
-fn safe_name(name: &str) -> String {
-    let cleaned: String = name.chars().map(|c| if c == '/' || c == '\\' || c == '\0' || c.is_control() { '_' } else { c }).collect();
-    let cleaned = cleaned.trim().trim_start_matches('.').to_string();
-    if cleaned.is_empty() { "attachment".into() } else { cleaned }
+/// A file name that is safe on every platform: no path separators or control characters, none of the characters
+/// Windows refuses (`< > : " | ? *`), no trailing dots or spaces, and not a Windows device name (CON, NUL, COM1…).
+pub(crate) fn safe_name(name: &str) -> String {
+    let cleaned: String = name.chars().map(|c| if matches!(c, '/' | '\\' | '\0' | '<' | '>' | ':' | '"' | '|' | '?' | '*') || c.is_control() { '_' } else { c }).collect();
+    let cleaned = cleaned.trim().trim_start_matches('.').trim_end_matches(|c| c == '.' || c == ' ').to_string();
+    if cleaned.is_empty() {
+        return "attachment".into();
+    }
+    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
+    if device { format!("_{cleaned}") } else { cleaned }
 }
 
 /// Where opened attachments are put; emptied at every start.
