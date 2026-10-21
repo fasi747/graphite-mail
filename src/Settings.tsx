@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { THEMES, ThemeChoice } from "./theme";
+import AppPasswordForm from "./AppPasswordForm";
+import { Acct, providerLabel, SIGN_IN_TIMEOUT_MS } from "./accounts";
 
 /** Small preview colours for each theme: sidebar, content, accent. */
 const SWATCH: Record<string, [string, string, string]> = {
@@ -11,7 +13,6 @@ const SWATCH: Record<string, [string, string, string]> = {
 };
 
 type Info = { path: string; size_bytes: number };
-type Acct = { email: string; display_name: string; provider?: string };
 const PALETTE = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff"];
 type Progress = { phase: number; label: string; done: number; total: number };
 
@@ -21,6 +22,14 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
   accounts: Acct[]; onClose: () => void; onAccountsChanged: () => void; theme: ThemeChoice; onTheme: (t: ThemeChoice) => void;
 }) {
   const [adding, setAdding] = useState<"microsoft" | "google" | null>(null);
+  const [appPassword, setAppPassword] = useState(false);
+  // null until known; false in builds made without the Google client secret.
+  const [googleOk, setGoogleOk] = useState<boolean | null>(null);
+  useEffect(() => { invoke<boolean>("google_sign_in_available").then(setGoogleOk).catch(() => setGoogleOk(false)); }, []);
+  // Each browser sign-in gets a number; one that was cancelled or timed out can no longer change the screen.
+  const attempt = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   const [info, setInfo] = useState<Info | null>(null);
   const [moving, setMoving] = useState<Progress | null>(null);
   const [message, setMessage] = useState("");
@@ -41,13 +50,30 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
   };
 
   async function add(kind: "microsoft" | "google") {
+    const mine = ++attempt.current;
     setError(""); setMessage(""); setAdding(kind);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => stopSignIn("Sign-in took too long and was stopped. You can try again."), SIGN_IN_TIMEOUT_MS);
     try {
       const a = await invoke<Acct>(kind === "google" ? "add_google_account" : "sign_in");
-      setMessage(`${a.email} is signed in. Downloading its mail…`);
       onAccountsChanged();
-    } catch (e) { setError(String(e)); }
-    finally { setAdding(null); }
+      if (mine === attempt.current) setMessage(`${a.email} is signed in. Downloading its mail…`);
+    } catch (e) { if (mine === attempt.current) setError(String(e)); }
+    finally {
+      if (mine === attempt.current) { clearTimeout(timer.current); setAdding(null); }
+    }
+  }
+  /** Gives up on the browser sign-in (Cancel button or time limit), here and in the app's sign-in listener. */
+  function stopSignIn(note: string) {
+    attempt.current++;
+    clearTimeout(timer.current);
+    setAdding(null); setError(""); setMessage(note);
+    invoke("cancel_sign_in").catch(() => {});
+  }
+  async function removeContacts(a: Acct) {
+    setError(""); setMessage("");
+    try { await invoke("remove_cached_contacts", { email: a.email }); setMessage(`Cached contacts of ${a.email} were removed. Contacts → Refresh contacts downloads them again.`); }
+    catch (e) { setError(String(e)); }
   }
   async function remove(a: Acct) {
     setError(""); setMessage("");
@@ -97,15 +123,33 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
           {accounts.map((a, i) => (
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
-              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {a.provider === "google" ? "Gmail" : "Microsoft 365"}</span></div>
+              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider)}</span></div>
+              {(a.provider ?? "microsoft") === "microsoft" && (
+                <button disabled={!!moving} title="Delete this account's downloaded contacts from this computer" onClick={() => removeContacts(a)}>Remove cached contacts</button>
+              )}
               <button disabled={!!moving} onClick={() => remove(a)}>Remove</button>
             </div>
           ))}
           <div className="rowbtns">
             <button disabled={!!adding || !!moving} onClick={() => add("microsoft")}>{adding === "microsoft" ? "Waiting for browser…" : "Add Microsoft account"}</button>
-            <button disabled={!!adding || !!moving} onClick={() => add("google")}>{adding === "google" ? "Waiting for browser…" : "Add Google account"}</button>
+            {googleOk && <button disabled={!!adding || !!moving} onClick={() => add("google")}>{adding === "google" ? "Waiting for browser…" : "Add Google account"}</button>}
+            <button className={appPassword ? "toggled" : undefined} aria-expanded={appPassword} aria-controls="apppw-form" disabled={!!moving}
+              onClick={() => { setError(""); setMessage(""); setAppPassword((open) => !open); }}>Add Gmail (app password)</button>
           </div>
-          {adding && <div className="muted" style={{ fontSize: 12 }}>Finish signing in in your web browser, then come back here.</div>}
+          {googleOk === false && <div className="muted" style={{ fontSize: 12 }}>Google sign-in coming soon. Use an app password for now.</div>}
+          {adding && (
+            <div className="rowbtns" style={{ alignItems: "center" }}>
+              <span className="muted" style={{ fontSize: 12 }}>Finish signing in in your web browser, then come back here.</span>
+              <button onClick={() => stopSignIn("Sign-in cancelled.")}>Cancel sign-in</button>
+            </div>
+          )}
+          {appPassword && (
+            <div className="rulecard" id="apppw-form">
+              <AppPasswordForm
+                onAdded={(a) => { setAppPassword(false); setMessage(`${a.email} is connected. Downloading its mail…`); onAccountsChanged(); }}
+                onCancel={() => setAppPassword(false)} />
+            </div>
+          )}
           <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>SIGNATURES</div>
           <div className="muted" style={{ fontSize: 12 }}>Each account has its own signature. It is added to new messages, replies and forwards sent from that account.</div>
           {accounts.map((a) => (

@@ -2,9 +2,11 @@ mod attachments;
 mod drafts;
 mod auth;
 mod calendar;
+mod contacts;
 mod folders;
 mod google;
 mod http;
+mod imap;
 mod links;
 mod mail;
 mod notify;
@@ -41,6 +43,7 @@ fn current_account() -> Option<Account> {
 fn sign_out() -> CmdResult<()> {
     for a in auth::accounts() {
         let _ = sync::forget_account_data(&a.email);
+        imap::forget(&a.email);
     }
     auth::sign_out().map_err(|e| e.to_string())
 }
@@ -54,6 +57,7 @@ fn list_accounts() -> Vec<Account> {
 #[tauri::command]
 fn remove_account(email: String) -> CmdResult<()> {
     sync::forget_account_data(&email).map_err(|e| e.to_string())?;
+    imap::forget(&email);
     auth::sign_out_account(Some(&email)).map_err(|e| e.to_string())
 }
 
@@ -62,6 +66,92 @@ async fn add_google_account(app: tauri::AppHandle) -> CmdResult<Account> {
     google::sign_in(|url| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string())))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// The Contacts view: directory and personal contacts matching `query` (optionally of one account), and how each
+/// Microsoft account's contacts stand (not granted yet, blocked by the organisation, …).
+#[tauri::command]
+fn contacts_overview(query: String, account: Option<String>) -> CmdResult<contacts::Overview> {
+    contacts::overview(&query, account.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn contact_detail(id: String) -> CmdResult<contacts::Detail> {
+    contacts::detail(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn refresh_contacts(account: Option<String>) -> CmdResult<Vec<contacts::AccountStatus>> {
+    contacts::refresh(account.as_deref()).await.map_err(|e| e.to_string())
+}
+
+/// "Grant access": asks Microsoft for the Contacts permissions for one account (opens the browser), then syncs.
+#[tauri::command]
+async fn grant_contacts(app: tauri::AppHandle, email: String) -> CmdResult<Vec<contacts::AccountStatus>> {
+    let acc = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).ok_or("Unknown account")?;
+    if acc.provider != "microsoft" {
+        return Err("Contacts are available for Microsoft 365 accounts.".into());
+    }
+    let open = |url: &str| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()));
+    let got = auth::sign_in_scoped(open, acc.rules, true, Some(&email)).await.map_err(|e| e.to_string())?;
+    if !got.email.eq_ignore_ascii_case(&email) {
+        return Err(format!("You signed in as {}, but this is for {email}. Please try again with {email}.", got.email));
+    }
+    contacts::refresh(Some(&email)).await.map_err(|e| e.to_string())
+}
+
+/// Forgets one account's downloaded contacts (they stay on the server) until "Refresh contacts".
+#[tauri::command]
+fn remove_cached_contacts(email: String) -> CmdResult<()> {
+    contacts::remove_cached_for(&email).map_err(|e| e.to_string())
+}
+
+/// Details of several contacts at once (the right-click menu of a selection).
+#[tauri::command]
+fn contact_details(ids: Vec<String>) -> CmdResult<Vec<contacts::Detail>> {
+    ids.iter().map(|id| contacts::detail(id)).collect::<anyhow::Result<_>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_contact_favourite(id: String, on: bool) -> CmdResult<()> {
+    contacts::set_favourite(&id, on).map_err(|e| e.to_string())
+}
+
+/// Saves contacts as a vCard 3.0 file at `path` (chosen in the save dialog); returns how many.
+#[tauri::command]
+fn export_vcards(ids: Vec<String>, path: String) -> CmdResult<usize> {
+    contacts::export_vcards(&ids, &path).map_err(|e| e.to_string())
+}
+
+/// Block sender for an address (Contacts view): a rule sending its mail to Junk.
+#[tauri::command]
+async fn block_address(account: String, address: String) -> CmdResult<String> {
+    rules::block_address(&account, &address).await.map_err(|e| e.to_string())
+}
+
+/// To/Cc suggestions while writing from `account` (Microsoft accounts only).
+#[tauri::command]
+fn suggest_recipients(query: String, account: String) -> CmdResult<Vec<contacts::Suggestion>> {
+    contacts::suggest(&query, &account, 8).map_err(|e| e.to_string())
+}
+
+/// Whether "Add Google account" can work in this build (false when it was built without the Google client secret).
+#[tauri::command]
+fn google_sign_in_available() -> bool {
+    google::sign_in_available()
+}
+
+/// Gives up on a browser sign-in that is still waiting (the user cancelled, or it took too long).
+#[tauri::command]
+fn cancel_sign_in() {
+    auth::cancel_sign_in();
+}
+
+/// Gmail with an app password (IMAP + SMTP): checks both servers accept it, then keeps it in the keyring.
+/// Needs no Google sign-in client, so it works in every build.
+#[tauri::command]
+async fn add_imap_account(email: String, password: String) -> CmdResult<Account> {
+    imap::add_account(&email, &password).await.map_err(|e| e.to_string())
 }
 
 /// Confirms the stored session still works by silently refreshing a token.
@@ -122,7 +212,14 @@ fn list_messages(folder_id: String, offset: i64, limit: i64) -> CmdResult<Vec<ma
 }
 
 #[tauri::command]
-fn get_message(id: String) -> CmdResult<mail::MessageDetail> {
+async fn get_message(id: String) -> CmdResult<mail::MessageDetail> {
+    // IMAP accounts download a body when it is first opened, if the background download hasn't reached it yet.
+    // Offline, this gives up quickly and shows what is here; the next open tries again.
+    match tokio::time::timeout(std::time::Duration::from_secs(15), imap::ensure_body(&id)).await {
+        Ok(Err(e)) => eprintln!("[graphite] couldn't download the message: {e}"),
+        Err(_) => eprintln!("[graphite] downloading the message took too long"),
+        Ok(Ok(())) => {}
+    }
     mail::message(&id).map_err(|e| e.to_string())
 }
 
@@ -305,7 +402,11 @@ async fn run_rule(id: String, folder_id: String) -> CmdResult<usize> {
 #[tauri::command]
 async fn enable_rules(app: tauri::AppHandle, email: String) -> CmdResult<Account> {
     let open = |url: &str| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()));
-    let provider = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).map(|a| a.provider).ok_or("Unknown account")?;
+    let found = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).ok_or("Unknown account")?;
+    if found.provider == imap::PROVIDER {
+        return Ok(found); // rules of app-password accounts are kept on this computer: nothing to allow
+    }
+    let provider = found.provider;
     let acc = if provider == "google" { google::sign_in_with(open, true, Some(&email)).await } else { auth::sign_in_with(open, true, Some(&email)).await }.map_err(|e| e.to_string())?;
     if !acc.email.eq_ignore_ascii_case(&email) {
         return Err(format!("You signed in as {}, but this rule belongs to {email}. Please try again with {email}.", acc.email));
@@ -471,6 +572,19 @@ pub fn run() {
             enable_rules,
             remove_account,
             add_google_account,
+            add_imap_account,
+            google_sign_in_available,
+            contacts_overview,
+            contact_detail,
+            refresh_contacts,
+            grant_contacts,
+            remove_cached_contacts,
+            suggest_recipients,
+            set_contact_favourite,
+            contact_details,
+            export_vcards,
+            block_address,
+            cancel_sign_in,
             get_notifications,
             set_notifications,
             create_folder,

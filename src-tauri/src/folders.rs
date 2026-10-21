@@ -183,6 +183,9 @@ pub async fn create(name: &str, parent_id: Option<&str>, account_email: Option<&
     if provider == "google" {
         return auth::in_account(Some(email), crate::google::create_label(name, parent_id, &aid)).await;
     }
+    if provider == crate::imap::PROVIDER {
+        return crate::imap::create_folder(name, parent_id, &aid).await;
+    }
     auth::in_account(Some(email), create_inner(name, parent_id, &aid)).await
 }
 
@@ -191,6 +194,9 @@ pub async fn rename(id: &str, name: &str) -> Result<()> {
     if provider == "google" {
         return auth::in_account(Some(email), crate::google::rename_label(id, name)).await;
     }
+    if provider == crate::imap::PROVIDER {
+        return crate::imap::rename_folder(id, name).await;
+    }
     auth::in_account(Some(email), rename_inner(id, name)).await
 }
 
@@ -198,6 +204,9 @@ pub async fn delete(id: &str) -> Result<()> {
     let (_, email, provider) = folder_owner(id)?;
     if provider == "google" {
         return auth::in_account(Some(email), crate::google::delete_label(id)).await;
+    }
+    if provider == crate::imap::PROVIDER {
+        return crate::imap::delete_folder(id).await;
     }
     auth::in_account(Some(email), delete_inner(id)).await
 }

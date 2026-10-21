@@ -117,14 +117,14 @@ pub fn move_to(id: &str, folder_id: &str) -> Result<()> {
 }
 
 /// Copies a message into another folder of its account. Outlook makes a second message (it arrives with the next
-/// sync); Gmail just adds the label, so the message shows under that folder at once.
+/// sync); Gmail (API or IMAP) just adds the label, so the message shows under that folder at once.
 pub fn copy_to(id: &str, folder_id: &str) -> Result<()> {
     storage::with_db(|db| {
         let tx = db.unchecked_transaction()?;
-        let (remote_folder, kind, same_account, current, google): (String, Option<String>, bool, bool, bool) = tx
+        let (remote_folder, kind, same_account, current, labels): (String, Option<String>, bool, bool, bool) = tx
             .query_row(
                 "SELECT f.remote_id, f.well_known_name, f.account_id=m.account_id, m.folder_id=f.id,
-                        COALESCE((SELECT provider FROM accounts WHERE id=m.account_id),'microsoft')='google'
+                        COALESCE((SELECT provider FROM accounts WHERE id=m.account_id),'microsoft') IN ('google','imap')
                  FROM folders f, messages m WHERE f.id=?1 AND m.id=?2",
                 params![folder_id, id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
@@ -140,7 +140,7 @@ pub fn copy_to(id: &str, folder_id: &str) -> Result<()> {
         if matches!(kind.as_deref(), Some("deleteditems" | "junkemail" | "sentitems" | "drafts")) {
             return Err(anyhow!("Messages can't be copied into that folder; use Move instead."));
         }
-        if google {
+        if labels {
             tx.execute("INSERT OR IGNORE INTO message_labels(message_id,folder_id) VALUES(?1,?2)", params![id, folder_id])?;
         }
         enqueue(&tx, id, "COPY", json!({ "destination": remote_folder }))?;
@@ -200,11 +200,12 @@ pub fn delete(id: &str) -> Result<()> {
                 tx.query_row("SELECT remote_id FROM messages WHERE id=?1", [id], |r| {
                     r.get(0)
                 })?;
-            tx.execute("DELETE FROM messages_fts WHERE message_id=?1", [id])?;
-            tx.execute("DELETE FROM messages WHERE id=?1", [id])?;
+            // Queued while the message row still exists, so it goes to the account that owns the message.
             if let Some(rid) = rid {
                 enqueue(&tx, id, "DELETE_HARD", json!({ "remote_id": rid }))?;
             }
+            tx.execute("DELETE FROM messages_fts WHERE message_id=?1", [id])?;
+            tx.execute("DELETE FROM messages WHERE id=?1", [id])?;
             tx.commit()?;
             Ok(())
         }),
@@ -368,7 +369,7 @@ fn graph_base() -> String {
 static REPLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct Item {
-    google: bool,
+    provider: String,
     email: Option<String>,
     seq: i64,
     entity: String,
@@ -503,7 +504,7 @@ pub async fn replay() -> Result<usize> {
         let rows = st.query_map([now()], |r| {
             Ok(Item {
                 email: r.get(4)?,
-                google: r.get::<_, String>(5)? == "google",
+                provider: r.get(5)?,
                 seq: r.get(0)?,
                 entity: r.get(1)?,
                 op: r.get(2)?,
@@ -529,8 +530,10 @@ pub async fn replay() -> Result<usize> {
         let p = &it.payload;
         use reqwest::Method;
         let result = auth::in_account(it.email.clone(), async {
-          if it.google {
-              return crate::google::apply(&it.op, &it.entity, rid.as_deref(), p).await;
+          match it.provider.as_str() {
+              "google" => return crate::google::apply(&it.op, &it.entity, rid.as_deref(), p).await,
+              crate::imap::PROVIDER => return crate::imap::apply(&it.op, &it.entity, p).await,
+              _ => {}
           }
           match (it.op.as_str(), &rid) {
             ("SET_READ", Some(r)) => {

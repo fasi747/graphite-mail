@@ -1,46 +1,104 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import Icon from "./Icon";
-import { placeMenu, stepItem } from "./menu";
+import { placeMenu, placeSubmenu, stepItem } from "./menu";
 
-export type MenuItem = { label: string; icon?: string; onClick: () => void; disabled?: boolean; separator?: boolean };
+export type MenuItem = {
+  label: string; icon?: string; onClick?: () => void; disabled?: boolean; separator?: boolean;
+  /** Choices shown beside the item (e.g. which address to use). */
+  submenu?: MenuItem[];
+};
 
-/** Right-click menu: stays on screen, Esc closes, arrow keys / Home / End move, Enter or Space chooses. */
-export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: x, top: y, ready: false });
-  const [focus, setFocus] = useState(() => stepItem(items.map((i) => !!i.disabled), -1, 1));
+const offs = (items: MenuItem[]) => items.map((i) => !!i.disabled);
+const firstOn = (items: MenuItem[]) => stepItem(offs(items), -1, 1);
+
+/** One panel of a menu. Placement is decided once its size is known, so it can stay inside the window. */
+function Panel({ items, label, place, focus, takeFocus, open, onKey, onHover, onPick, panel }: {
+  items: MenuItem[]; label: string; place: (w: number, h: number) => { left: number; top: number }; focus: number; takeFocus: boolean;
+  open?: number; onKey: (e: React.KeyboardEvent) => void; onHover: (i: number, el: HTMLElement) => void; onPick: (i: number, el: HTMLElement) => void;
+  panel?: React.RefObject<HTMLDivElement | null>;
+}) {
+  const own = useRef<HTMLDivElement>(null);
+  const ref = panel ?? own;
+  const [pos, setPos] = useState({ left: 0, top: 0, ready: false });
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
-    const p = placeMenu(x, y, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight);
-    setPos({ ...p, ready: true });
-    el.focus();
-  }, [x, y]);
-  useLayoutEffect(() => { (ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[focus])?.focus(); }, [focus, pos.ready]);
-  const disabled = items.map((i) => !!i.disabled);
-  const choose = (i: number) => { if (!items[i].disabled) { onClose(); items[i].onClick(); } };
-  const onKey = (e: React.KeyboardEvent) => {
+    if (el) setPos({ ...place(el.offsetWidth, el.offsetHeight), ready: true });
+  }, []);
+  useLayoutEffect(() => {
+    if (takeFocus) (ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[focus] ?? ref.current)?.focus();
+  }, [focus, pos.ready, takeFocus]);
+  return (
+    <div ref={ref} className="menu ctxmenu" role="menu" tabIndex={-1} aria-label={label} onKeyDown={onKey}
+      style={{ left: pos.left, top: pos.top, visibility: pos.ready ? "visible" : "hidden" }} onMouseDown={(e) => e.stopPropagation()}>
+      {items.map((it, i) => (
+        <div key={i} role="menuitem" tabIndex={-1} aria-disabled={it.disabled || undefined}
+          aria-haspopup={it.submenu ? "menu" : undefined} aria-expanded={it.submenu ? open === i : undefined}
+          className={`${it.separator ? "sep" : ""} ${it.disabled ? "off" : ""} ${i === focus ? "focus" : ""}`}
+          onMouseEnter={(e) => !it.disabled && onHover(i, e.currentTarget)} onClick={(e) => onPick(i, e.currentTarget)}>
+          <span className="ctx-ico">{it.icon && <Icon name={it.icon} size={14} />}</span>
+          <span className="ctx-label">{it.label}</span>
+          {it.submenu && <span className="ctx-more" aria-hidden>›</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Right-click menu: stays on screen, Esc closes, arrow keys / Home / End move, Enter or Space chooses.
+ *  An item with a submenu opens it with → (or Enter, or hovering); ← or Esc goes back. */
+export function ContextMenu({ x, y, items, onClose, label = "Message actions" }: { x: number; y: number; items: MenuItem[]; onClose: () => void; label?: string }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [focus, setFocus] = useState(() => firstOn(items));
+  const [sub, setSub] = useState<null | { i: number; rect: DOMRect; keyboard: boolean }>(null);
+  const [subFocus, setSubFocus] = useState(0);
+  const subItems = sub ? items[sub.i].submenu ?? [] : [];
+
+  const run = (it: MenuItem) => { if (!it.disabled) { onClose(); it.onClick?.(); } };
+  const openSub = (i: number, el: HTMLElement, keyboard: boolean) => {
+    const s = items[i].submenu;
+    if (!s?.length || items[i].disabled) return;
+    setSub({ i, rect: el.getBoundingClientRect(), keyboard });
+    setSubFocus(firstOn(s));
+  };
+  const itemEl = (i: number) => root.current?.querySelectorAll<HTMLElement>("[role=menuitem]")[i];
+  const pick = (i: number, el: HTMLElement, keyboard = false) => (items[i].submenu ? openSub(i, el, keyboard) : run(items[i]));
+  const moves = (e: React.KeyboardEvent, list: MenuItem[], set: (f: (n: number) => number) => void) => {
+    const k = e.key, off = offs(list);
+    if (k === "ArrowDown") set((f) => stepItem(off, f, 1));
+    else if (k === "ArrowUp") set((f) => stepItem(off, f, -1));
+    else if (k === "Home") set(() => stepItem(off, -1, 1));
+    else if (k === "End") set(() => stepItem(off, 0, -1));
+    else return false;
+    e.preventDefault();
+    return true;
+  };
+  const onRootKey = (e: React.KeyboardEvent) => {
+    e.stopPropagation();
+    if (moves(e, items, (f) => { setSub(null); setFocus(f); })) return;
     const k = e.key;
     if (k === "Escape" || k === "Tab") { e.preventDefault(); onClose(); }
-    else if (k === "ArrowDown") { e.preventDefault(); setFocus((f) => stepItem(disabled, f, 1)); }
-    else if (k === "ArrowUp") { e.preventDefault(); setFocus((f) => stepItem(disabled, f, -1)); }
-    else if (k === "Home") { e.preventDefault(); setFocus(stepItem(disabled, -1, 1)); }
-    else if (k === "End") { e.preventDefault(); setFocus(stepItem(disabled, 0, -1)); }
-    else if (k === "Enter" || k === " ") { e.preventDefault(); choose(focus); }
+    else if (k === "ArrowRight" && items[focus]?.submenu) { e.preventDefault(); const el = itemEl(focus); if (el) openSub(focus, el, true); }
+    else if (k === "Enter" || k === " ") { e.preventDefault(); const el = itemEl(focus); if (el) pick(focus, el, true); }
+  };
+  const onSubKey = (e: React.KeyboardEvent) => {
     e.stopPropagation();
+    if (moves(e, subItems, setSubFocus)) return;
+    const k = e.key;
+    if (k === "Escape" || k === "ArrowLeft") { e.preventDefault(); setSub(null); }
+    else if (k === "Tab") { e.preventDefault(); onClose(); }
+    else if (k === "Enter" || k === " ") { e.preventDefault(); if (subItems[subFocus]) run(subItems[subFocus]); }
   };
   return (
     <div className="ctx-backdrop" onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
-      <div ref={ref} className="menu ctxmenu" role="menu" tabIndex={-1} aria-label="Message actions" onKeyDown={onKey}
-        style={{ left: pos.left, top: pos.top, visibility: pos.ready ? "visible" : "hidden" }} onMouseDown={(e) => e.stopPropagation()}>
-        {items.map((it, i) => (
-          <div key={i} role="menuitem" tabIndex={-1} aria-disabled={it.disabled || undefined}
-            className={`${it.separator ? "sep" : ""} ${it.disabled ? "off" : ""} ${i === focus ? "focus" : ""}`}
-            onMouseEnter={() => !it.disabled && setFocus(i)} onClick={() => choose(i)}>
-            <span className="ctx-ico">{it.icon && <Icon name={it.icon} size={14} />}</span>{it.label}
-          </div>
-        ))}
-      </div>
+      <Panel panel={root} items={items} label={label} focus={focus} open={sub?.i} takeFocus={!sub?.keyboard}
+        place={(w, h) => placeMenu(x, y, w, h, innerWidth, innerHeight)} onKey={onRootKey}
+        onHover={(i, el) => { setFocus(i); if (items[i].submenu) openSub(i, el, false); else setSub(null); }}
+        onPick={(i, el) => pick(i, el)} />
+      {sub && (
+        <Panel key={sub.i} items={subItems} label={items[sub.i].label} focus={subFocus} takeFocus={sub.keyboard}
+          place={(w, h) => placeSubmenu(sub.rect, w, h, innerWidth, innerHeight)} onKey={onSubKey}
+          onHover={(i) => setSubFocus(i)} onPick={(i) => run(subItems[i])} />
+      )}
     </div>
   );
 }

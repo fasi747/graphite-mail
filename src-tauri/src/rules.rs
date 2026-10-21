@@ -1,5 +1,6 @@
 //! Mail rules. They live on the server (Outlook inbox rules / Gmail filters) so they also work when the app is closed;
-//! a local copy is kept for listing and for "run on existing mail".
+//! a local copy is kept for listing and for "run on existing mail". IMAP accounts have no server rules: theirs are
+//! kept here only and run on new Inbox mail each time the account syncs.
 
 use crate::{auth, google, outbox, storage};
 use anyhow::{Result, anyhow, bail};
@@ -230,6 +231,9 @@ fn server_error(status: u16, v: &Value, what: &str) -> anyhow::Error {
 // ---------------------------------------------------------------- server calls
 
 async fn push_new(row_account_email: &str, provider: &str, r: &Rule, folder_remote: Option<&str>, sequence: i64) -> Result<Option<String>> {
+    if provider == crate::imap::PROVIDER {
+        return Ok(None); // kept on this computer only
+    }
     auth::in_account(Some(row_account_email.to_string()), async {
         let (s, v) = if provider == "google" {
             if !r.enabled {
@@ -248,6 +252,9 @@ async fn push_new(row_account_email: &str, provider: &str, r: &Rule, folder_remo
 }
 
 async fn remove_remote(email: &str, provider: &str, remote: &str) -> Result<()> {
+    if provider == crate::imap::PROVIDER {
+        return Ok(());
+    }
     auth::in_account(Some(email.to_string()), async {
         let u = if provider == "google" {
             google::url(&google::gmail(), &["settings", "filters", remote], &[])
@@ -290,6 +297,25 @@ pub async fn block_sender(message_id: &str) -> Result<String> {
     let (account, sender) = outbox::sender_of(message_id)?;
     let junk = outbox::junk_folder_of(message_id)?;
     create(Rule { account, name: format!("Block {sender}"), enabled: true, from: sender.clone(), move_to: Some(junk), ..Default::default() }).await?;
+    Ok(sender)
+}
+
+/// Blocks an address for one account (e.g. from the Contacts view): the same rule as Block sender.
+pub async fn block_address(account: &str, address: &str) -> Result<String> {
+    let sender = address.trim().to_string();
+    if !is_address(&sender) {
+        bail!("“{sender}” is not an email address.");
+    }
+    let junk: String = storage::with_db(|db| {
+        db.query_row(
+            "SELECT f.id FROM folders f JOIN accounts a ON a.id=f.account_id WHERE lower(a.email)=lower(?1) AND f.well_known_name='junkemail'",
+            [account],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(anyhow!("This account has no Junk folder yet. Try again after the next sync."))
+    })?;
+    create(Rule { account: account.to_string(), name: format!("Block {sender}"), enabled: true, from: sender.clone(), move_to: Some(junk), ..Default::default() }).await?;
     Ok(sender)
 }
 
@@ -358,19 +384,30 @@ pub fn run_now(rule_id: &str, folder_id: &str) -> Result<usize> {
     if !in_account {
         bail!("Choose a folder of the same account as the rule.");
     }
-    let candidates: Vec<(String, String, String, String, String, String, bool, bool)> = storage::with_db(|db| {
-        let mut st = db.prepare(
-            "SELECT m.id, COALESCE(m.sender_name,'') || ' ' || COALESCE(m.sender_address,''), COALESCE(m.subject,''),
-                    COALESCE(m.to_recipients_json,'') || ' ' || COALESCE(m.cc_recipients_json,''),
-                    COALESCE((SELECT body_plaintext FROM messages_fts WHERE message_id=m.id),''), m.folder_id, m.is_read, m.is_flagged
-             FROM messages m
-             WHERE (m.folder_id=?1 OR m.id IN (SELECT message_id FROM message_labels WHERE folder_id=?1))",
-        )?;
-        let rows = st.query_map([folder_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+    let candidates = storage::with_db(|db| {
+        let mut st = db.prepare(&format!("{CANDIDATES} WHERE (m.folder_id=?1 OR m.id IN (SELECT message_id FROM message_labels WHERE folder_id=?1))"))?;
+        let rows = st.query_map([folder_id], candidate)?;
+        Ok(rows.filter_map(|x| x.ok()).collect::<Vec<_>>())
     })?;
+    apply(r, &row.account_id, candidates)
+}
+
+/// What a rule looks at in a message: (id, sender, subject, recipients, text, folder, read, flagged).
+type Candidate = (String, String, String, String, String, String, bool, bool);
+
+const CANDIDATES: &str = "SELECT m.id, COALESCE(m.sender_name,'') || ' ' || COALESCE(m.sender_address,''), COALESCE(m.subject,''),
+        COALESCE(m.to_recipients_json,'') || ' ' || COALESCE(m.cc_recipients_json,''),
+        COALESCE((SELECT body_plaintext FROM messages_fts WHERE message_id=m.id),''), m.folder_id, m.is_read, m.is_flagged
+     FROM messages m";
+
+fn candidate(r: &rusqlite::Row) -> rusqlite::Result<Candidate> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
+}
+
+/// Applies one rule to some messages through the offline queue. Returns how many matched.
+fn apply(r: &Rule, account_id: &str, candidates: Vec<Candidate>) -> Result<usize> {
     let trash: Option<String> = storage::with_db(|db| {
-        Ok(db.query_row("SELECT id FROM folders WHERE account_id=?1 AND well_known_name='deleteditems'", [&row.account_id], |x| x.get(0)).optional()?)
+        Ok(db.query_row("SELECT id FROM folders WHERE account_id=?1 AND well_known_name='deleteditems'", [account_id], |x| x.get(0)).optional()?)
     })?;
     let mut matched = 0;
     for (id, sender, subject, to, body, current, read, flagged) in candidates {
@@ -399,6 +436,30 @@ pub fn run_now(rule_id: &str, folder_id: &str) -> Result<usize> {
         }
     }
     Ok(matched)
+}
+
+/// IMAP accounts: runs the account's switched-on rules on newly arrived messages. Returns how many changed.
+pub fn apply_local(account_id: &str, message_ids: &[String]) -> Result<usize> {
+    let rules: Vec<String> = storage::with_db(|db| {
+        let mut st = db.prepare("SELECT id FROM rules WHERE account_id=?1 AND enabled=1 ORDER BY created_at")?;
+        let rows = st.query_map([account_id], |r| r.get(0))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    })?;
+    let mut n = 0;
+    for rid in rules {
+        let row = load(&rid)?;
+        // Read the messages again for each rule: an earlier rule may have moved or deleted some.
+        let candidates: Vec<Candidate> = storage::with_db(|db| {
+            let mut st = db.prepare(&format!("{CANDIDATES} WHERE m.id=?1 AND m.account_id=?2"))?;
+            let mut out = vec![];
+            for id in message_ids {
+                out.extend(st.query_map(params![id, account_id], candidate)?.filter_map(|x| x.ok()));
+            }
+            Ok(out)
+        })?;
+        n += apply(&row.rule, account_id, candidates)?;
+    }
+    Ok(n)
 }
 
 #[cfg(test)]

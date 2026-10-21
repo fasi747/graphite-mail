@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import DOMPurify from "dompurify";
 import { open as pickFiles } from "@tauri-apps/plugin-dialog";
+import RecipientInput from "./RecipientInput";
 
 export type ComposeInit = {
   mode: "new" | "reply" | "replyAll" | "forward";
@@ -139,8 +140,8 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
             </select>
           </label>
         )}
-        <label className="field"><span>To:</span><input id="cmp-to" value={to} onChange={(e) => { touch(); setTo(e.target.value); }} /></label>
-        <label className="field"><span>Cc:</span><input value={cc} onChange={(e) => { touch(); setCc(e.target.value); }} /></label>
+        <label className="field"><span>To:</span><RecipientInput id="cmp-to" label="To" account={from} value={to} onChange={(v) => { touch(); setTo(v); }} /></label>
+        <label className="field"><span>Cc:</span><RecipientInput id="cmp-cc" label="Cc" account={from} value={cc} onChange={(v) => { touch(); setCc(v); }} /></label>
         <label className="field"><span>Subject:</span><input value={subject} onChange={(e) => { touch(); setSubject(e.target.value); }} /></label>
         <div className="fmt">
           <button className="icon" onClick={() => cmd("bold")}><b>B</b></button>

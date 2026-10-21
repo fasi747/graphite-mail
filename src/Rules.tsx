@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { isGmail } from "./accounts";
 
 type Acct = { email: string; display_name: string; provider?: string; rules?: boolean };
 type Fld = { id: string; name: string; well_known: string | null; parent_remote_id: string | null; remote_id: string; account_email: string };
@@ -15,7 +16,7 @@ const blank = (account: string): Rule => ({ id: null, account, name: "", enabled
 
 function summary(r: RuleView) {
   const when = [r.from && `from “${r.from}”`, r.subject && `subject has “${r.subject}”`, r.to && `to/cc has “${r.to}”`, r.body && `text has “${r.body}”`].filter(Boolean).join(" and ");
-  const flagWord = r.provider === "google" ? "star it" : "mark it important";
+  const flagWord = isGmail(r.provider) ? "star it" : "mark it important";
   const doWhat = r.delete ? "delete it" : [r.move_to && `move it to “${r.folder_name ?? "a folder"}”`, r.mark_read && "mark it read", r.flag && flagWord].filter(Boolean).join(", ");
   return `If ${when}: ${doWhat}.`;
 }
@@ -32,6 +33,8 @@ export default function Rules({ accounts, folders, onClose, onToast, onAccountsC
 
   const acct = accounts.find((a) => a.email === email);
   const google = acct?.provider === "google";
+  const local = acct?.provider === "imap"; // app-password accounts: rules live on this computer
+  const gmail = google || local;
   const mine = folders.filter((f) => f.account_email.toLowerCase() === email.toLowerCase());
   // folders as an indented list (children under their parent)
   const options = useMemo(() => {
@@ -44,8 +47,8 @@ export default function Rules({ accounts, folders, onClose, onToast, onAccountsC
     const out: { f: Fld; depth: number }[] = [];
     const walk = (l: Fld[], d: number) => l.forEach((f) => { out.push({ f, depth: d }); walk(kids.get(f.remote_id) ?? [], d + 1); });
     walk(roots, 0);
-    return out.filter(({ f }) => !(google && (f.well_known === "sentitems" || f.well_known === "drafts")));
-  }, [mine, google]);
+    return out.filter(({ f }) => !(gmail && (f.well_known === "sentitems" || f.well_known === "drafts")));
+  }, [mine, gmail]);
 
   const load = () => invoke<RuleView[]>("list_rules").then(setRules).catch((e) => setError(String(e)));
   useEffect(() => { load(); }, []);
@@ -85,7 +88,9 @@ export default function Rules({ accounts, folders, onClose, onToast, onAccountsC
             </label>
           )}
           <div className="muted" style={{ fontSize: 12 }}>
-            Rules are kept on {google ? "Gmail (as filters)" : "Outlook (as inbox rules)"}, so they also work when this app is closed. They apply to new mail as it arrives.
+            {local
+              ? "Rules for this account are kept on this computer. They run on new Inbox mail each time Graphite Mail checks for mail, so only while the app is open."
+              : `Rules are kept on ${google ? "Gmail (as filters)" : "Outlook (as inbox rules)"}, so they also work when this app is closed. They apply to new mail as it arrives.`}
           </div>
 
           {acct && !acct.rules ? (
@@ -110,7 +115,7 @@ export default function Rules({ accounts, folders, onClose, onToast, onAccountsC
                 </select>
               </label>
               <label className="check"><input type="checkbox" disabled={edit.delete} checked={edit.mark_read} onChange={(e) => set({ mark_read: e.target.checked })} /> Mark as read</label>
-              <label className="check"><input type="checkbox" disabled={edit.delete} checked={edit.flag} onChange={(e) => set({ flag: e.target.checked })} /> {google ? "Star it" : "Mark as important"}{!google && <span className="muted"> (Outlook rules can't set a flag)</span>}</label>
+              <label className="check"><input type="checkbox" disabled={edit.delete} checked={edit.flag} onChange={(e) => set({ flag: e.target.checked })} /> {gmail ? "Star it" : "Mark as important"}{!gmail && <span className="muted"> (Outlook rules can't set a flag)</span>}</label>
               <label className="check"><input type="checkbox" checked={edit.delete} onChange={(e) => set({ delete: e.target.checked, move_to: e.target.checked ? null : edit.move_to, mark_read: false, flag: false })} /> Delete it (moves to Trash)</label>
               <div className="prompt-actions">
                 <button disabled={busy} onClick={() => { setEdit(null); setError(""); }}>Cancel</button>

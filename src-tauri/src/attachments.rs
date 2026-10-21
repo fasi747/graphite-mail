@@ -91,7 +91,7 @@ pub async fn list(message_id: &str) -> Result<Vec<AttachmentRow>> {
         return Ok(found);
     }
     let o = owner_of_message(message_id)?;
-    if o.has_attachments && o.provider != "google" {
+    if o.has_attachments && o.provider == "microsoft" {
         if let Some(rid) = &o.remote_id {
             let _ = auth::in_account(Some(o.email.clone()), store_file_attachments(message_id, rid)).await; // offline: just no list yet
             return rows(message_id);
@@ -131,6 +131,8 @@ pub async fn bytes(att_id: &str) -> Result<(String, Vec<u8>)> {
     let data = auth::in_account(Some(o.email.clone()), async {
         if o.provider == "google" {
             google::download_attachment(&rid, &a.name, a.size).await
+        } else if o.provider == crate::imap::PROVIDER {
+            crate::imap::download_attachment(&a.message_id, &a.name, a.size).await
         } else {
             let aid = a.remote.clone().ok_or(anyhow!("Attachment id missing"))?;
             let (s, v) = google::call(Method::GET, &format!("{}/me/messages/{rid}/attachments/{aid}", graph()), None).await?;

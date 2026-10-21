@@ -17,21 +17,36 @@ const SCOPES: &str =
 /// Extra permission needed to create Outlook mail rules; asked for only when the user turns rules on.
 const RULES_SCOPE: &str = "MailboxSettings.ReadWrite";
 
-fn scopes(rules: bool) -> String {
-    if rules { format!("{SCOPES} {RULES_SCOPE}") } else { SCOPES.to_string() }
+/// Extra permissions for the Contacts view, asked for only when the user grants them (Contacts → Grant access):
+/// personal contacts, the people they work with, and the organisation's directory (basic profiles).
+pub const CONTACTS_SCOPES: &str = "Contacts.Read People.Read User.ReadBasic.All";
+
+fn scopes(rules: bool, contacts: bool) -> String {
+    let mut s = SCOPES.to_string();
+    if rules {
+        s = format!("{s} {RULES_SCOPE}");
+    }
+    if contacts {
+        s = format!("{s} {CONTACTS_SCOPES}");
+    }
+    s
 }
+#[cfg(not(test))]
 const KEYRING_SERVICE: &str = "graphite-mail";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Account {
     pub email: String,
     pub display_name: String,
-    /// "microsoft" or "google"
+    /// "microsoft", "google" (Gmail through Google sign-in) or "imap" (Gmail through IMAP/SMTP with an app password)
     #[serde(default = "default_provider")]
     pub provider: String,
     /// The account has granted the extra permission that mail rules need.
     #[serde(default)]
     pub rules: bool,
+    /// Microsoft: the account has granted the Contacts permissions (CONTACTS_SCOPES).
+    #[serde(default)]
+    pub contacts: bool,
 }
 
 fn default_provider() -> String {
@@ -89,16 +104,16 @@ fn rt_key(email: &str) -> String {
 
 /// All signed-in accounts, oldest first. Migrates the single-account format of earlier versions.
 pub fn accounts() -> Vec<Account> {
-    if let Some(list) = entry("accounts").ok().and_then(|e| e.get_password().ok()).and_then(|s| serde_json::from_str::<Vec<Account>>(&s).ok()) {
+    if let Some(list) = kr_get("accounts").ok().and_then(|s| serde_json::from_str::<Vec<Account>>(&s).ok()) {
         return list;
     }
     // Earlier versions kept one account under "account" + "refresh_token".
-    let legacy: Option<Account> = entry("account").ok().and_then(|e| e.get_password().ok()).and_then(|s| serde_json::from_str(&s).ok());
-    let rt = entry("refresh_token").ok().and_then(|e| e.get_password().ok());
+    let legacy: Option<Account> = kr_get("account").ok().and_then(|s| serde_json::from_str(&s).ok());
+    let rt = kr_get("refresh_token").ok();
     if let (Some(acc), Some(rt)) = (legacy, rt) {
-        if entry(&rt_key(&acc.email)).and_then(|e| Ok(e.set_password(&rt)?)).is_ok() && save_accounts(&[acc.clone()]).is_ok() {
-            let _ = entry("account").map(|e| e.delete_credential());
-            let _ = entry("refresh_token").map(|e| e.delete_credential());
+        if kr_set(&rt_key(&acc.email), &rt).is_ok() && save_accounts(&[acc.clone()]).is_ok() {
+            kr_delete("account");
+            kr_delete("refresh_token");
         }
         return vec![acc];
     }
@@ -106,39 +121,108 @@ pub fn accounts() -> Vec<Account> {
 }
 
 fn save_accounts(list: &[Account]) -> Result<()> {
-    entry("accounts")?.set_password(&serde_json::to_string(list)?)?;
-    Ok(())
+    kr_set("accounts", &serde_json::to_string(list)?)
 }
 
 /// Adds or updates an account after a successful sign-in.
 pub fn remember(acc: &Account, refresh_token: &str) -> Result<()> {
-    entry(&rt_key(&acc.email))?.set_password(refresh_token)?;
+    kr_set(&rt_key(&acc.email), refresh_token)?;
+    remember_account(acc)
+}
+
+/// Adds or updates an account in the list, without touching its sign-in secret.
+pub fn remember_account(acc: &Account) -> Result<()> {
     let mut list = accounts();
     match list.iter_mut().find(|a| a.email.eq_ignore_ascii_case(&acc.email)) {
         Some(a) => {
-            let rules = a.rules || acc.rules; // a permission once granted stays granted
+            let (rules, contacts) = (a.rules || acc.rules, a.contacts || acc.contacts); // a permission once granted stays granted
             *a = acc.clone();
             a.rules = rules;
+            a.contacts = contacts;
         }
         None => list.push(acc.clone()),
     }
     save_accounts(&list)
 }
 
+/// Records that an account no longer has the Contacts permissions (they were withdrawn).
+pub fn drop_contacts_permission(email: &str) -> Result<()> {
+    let mut list = accounts();
+    for a in list.iter_mut().filter(|a| a.email.eq_ignore_ascii_case(email)) {
+        a.contacts = false;
+    }
+    save_accounts(&list)
+}
+
 pub fn refresh_token_for(email: &str) -> Result<String> {
-    entry(&rt_key(email))?.get_password().context("Not signed in")
+    kr_get(&rt_key(email)).context("Not signed in")
 }
 
 pub fn store_refresh_token(email: &str, rt: &str) -> Result<()> {
-    Ok(entry(&rt_key(email))?.set_password(rt)?)
+    kr_set(&rt_key(email), rt)
+}
+
+fn app_key(email: &str) -> String {
+    format!("app:{}", email.to_lowercase())
+}
+
+/// IMAP accounts: the Google app password. It lives only in the keyring, never in a file or the database.
+pub fn store_app_password(email: &str, password: &str) -> Result<()> {
+    kr_set(&app_key(email), password)
+}
+
+pub fn app_password(email: &str) -> Result<String> {
+    kr_get(&app_key(email))
+}
+
+pub fn forget_app_password(email: &str) {
+    kr_delete(&app_key(email));
 }
 
 pub(crate) fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
+#[cfg(not(test))]
 fn entry(key: &str) -> Result<keyring::Entry> {
     Ok(keyring::Entry::new(KEYRING_SERVICE, key)?)
+}
+
+#[cfg(not(test))]
+fn kr_get(key: &str) -> Result<String> {
+    Ok(entry(key)?.get_password()?)
+}
+
+#[cfg(not(test))]
+fn kr_set(key: &str, value: &str) -> Result<()> {
+    Ok(entry(key)?.set_password(value)?)
+}
+
+#[cfg(not(test))]
+fn kr_delete(key: &str) {
+    if let Ok(e) = entry(key) {
+        let _ = e.delete_credential();
+    }
+}
+
+/// Tests use an in-memory keyring instead of the desktop's.
+#[cfg(test)]
+pub(crate) static TEST_KEYRING: Mutex<Option<std::collections::HashMap<String, String>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn kr_get(key: &str) -> Result<String> {
+    TEST_KEYRING.lock().unwrap().get_or_insert_with(Default::default).get(key).cloned().ok_or_else(|| anyhow!("No such keyring entry"))
+}
+
+#[cfg(test)]
+fn kr_set(key: &str, value: &str) -> Result<()> {
+    TEST_KEYRING.lock().unwrap().get_or_insert_with(Default::default).insert(key.to_string(), value.to_string());
+    Ok(())
+}
+
+#[cfg(test)]
+fn kr_delete(key: &str) {
+    TEST_KEYRING.lock().unwrap().get_or_insert_with(Default::default).remove(key);
 }
 
 /// Runs the interactive sign-in. `open` is called with the URL to show in the system browser.
@@ -148,7 +232,12 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
 
 /// Sign-in that can also ask for the mail-rules permission, and pre-select an account with `hint`.
 pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hint: Option<&str>) -> Result<Account> {
-    let scope = scopes(rules);
+    sign_in_scoped(open, rules, false, hint).await
+}
+
+/// Sign-in that can ask for the rules and/or the Contacts permissions (kept once granted).
+pub async fn sign_in_scoped(open: impl FnOnce(&str) -> Result<()>, rules: bool, contacts: bool, hint: Option<&str>) -> Result<Account> {
+    let scope = scopes(rules, contacts);
     let verifier = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -176,9 +265,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
     }
     open(url.as_str())?;
 
-    let code = tokio::time::timeout(Duration::from_secs(300), wait_for_code(&listener, &state))
-        .await
-        .map_err(|_| anyhow!("Sign-in timed out"))??;
+    let code = wait_for_sign_in(&listener, &state).await?;
 
     let tok = token_request(&[
         ("client_id", CLIENT_ID),
@@ -192,9 +279,26 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
 
     let mut account = fetch_me(&tok.access_token).await?;
     account.rules = rules;
+    account.contacts = contacts;
     remember(&account, tok.refresh_token.as_deref().ok_or(anyhow!("No refresh token"))?)?;
     cache_put(&account.email, &tok.access_token, tok.expires_in);
     Ok(account)
+}
+
+/// Lets the user give up on a browser sign-in that never comes back.
+static SIGN_IN_CANCEL: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Stops every browser sign-in that is still waiting (Microsoft or Google).
+pub fn cancel_sign_in() {
+    SIGN_IN_CANCEL.notify_waiters();
+}
+
+/// Waits for the browser to come back with the sign-in code: at most five minutes, or until cancel_sign_in().
+pub(crate) async fn wait_for_sign_in(listener: &TcpListener, state: &str) -> Result<String> {
+    tokio::select! {
+        r = tokio::time::timeout(Duration::from_secs(300), wait_for_code(listener, state)) => r.map_err(|_| anyhow!("Sign-in timed out"))?,
+        _ = SIGN_IN_CANCEL.notified() => Err(anyhow!("Sign-in was cancelled.")),
+    }
 }
 
 pub(crate) async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
@@ -283,6 +387,7 @@ async fn fetch_me(token: &str) -> Result<Account> {
         display_name: me.display_name.unwrap_or(me.user_principal_name),
         provider: "microsoft".into(),
         rules: false,
+        contacts: false,
     })
 }
 
@@ -297,19 +402,29 @@ pub async fn access_token() -> Result<String> {
         return Ok(t);
     }
     let acc = accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email));
-    if acc.as_ref().map(|a| a.provider.as_str()) == Some("google") {
-        return crate::google::access_token(&email).await;
+    match acc.as_ref().map(|a| a.provider.as_str()) {
+        Some("google") => return crate::google::access_token(&email).await,
+        // IMAP accounts sign in to the mail server with their app password; they have no OAuth token.
+        Some(crate::imap::PROVIDER) => return Err(anyhow!("{email} uses an app password, not a sign-in token")),
+        _ => {}
     }
     let rt = refresh_token_for(&email)?;
-    let scope = scopes(acc.as_ref().is_some_and(|a| a.rules));
-    let tok = token_request(&[
-        ("client_id", CLIENT_ID),
-        ("grant_type", "refresh_token"),
-        ("refresh_token", &rt),
-        ("scope", &scope),
-    ])
-    .await
-    .map_err(|e| anyhow!("{email}: {e}"))?;
+    let (rules, contacts) = acc.as_ref().map_or((false, false), |a| (a.rules, a.contacts));
+    let refresh = |scope: String| {
+        let rt = rt.clone();
+        async move { token_request(&[("client_id", CLIENT_ID), ("grant_type", "refresh_token"), ("refresh_token", &rt), ("scope", &scope)]).await }
+    };
+    let tok = match refresh(scopes(rules, contacts)).await {
+        Ok(t) => t,
+        // The Contacts permissions were withdrawn (by the user or an administrator): mail and calendar must keep
+        // working, so sign in without them and let the Contacts view ask again.
+        Err(_) if contacts => {
+            let t = refresh(scopes(rules, false)).await.map_err(|e| anyhow!("{email}: {e}"))?;
+            let _ = drop_contacts_permission(&email);
+            t
+        }
+        Err(e) => return Err(anyhow!("{email}: {e}")),
+    };
     if let Some(new_rt) = tok.refresh_token {
         store_refresh_token(&email, &new_rt)?;
     }
@@ -331,13 +446,14 @@ pub fn sign_out_account(email: Option<&str>) -> Result<()> {
     let list = accounts();
     let (gone, keep): (Vec<_>, Vec<_>) = list.into_iter().partition(|a| email.map_or(true, |e| a.email.eq_ignore_ascii_case(e)));
     for a in &gone {
-        let _ = entry(&rt_key(&a.email))?.delete_credential();
+        kr_delete(&rt_key(&a.email));
+        kr_delete(&app_key(&a.email));
         if let Some(c) = CACHE.lock().unwrap().as_mut() {
             c.remove(&a.email.to_lowercase());
         }
     }
     if keep.is_empty() {
-        let _ = entry("accounts")?.delete_credential();
+        kr_delete("accounts");
     } else {
         save_accounts(&keep)?;
     }
@@ -346,4 +462,18 @@ pub fn sign_out_account(email: Option<&str>) -> Result<()> {
 
 pub fn sign_out() -> Result<()> {
     sign_out_account(None)
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn a_waiting_browser_sign_in_can_be_cancelled() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let waiting = tokio::spawn(async move { super::wait_for_sign_in(&listener, "state").await });
+        // Let it start waiting, then give up as the Cancel button (or the UI's time limit) does.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        super::cancel_sign_in();
+        let r = tokio::time::timeout(std::time::Duration::from_secs(2), waiting).await.expect("stops at once").unwrap();
+        assert!(r.unwrap_err().to_string().contains("cancelled"));
+    }
 }

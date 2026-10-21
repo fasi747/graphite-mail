@@ -5,6 +5,13 @@ export function placeMenu(x: number, y: number, w: number, h: number, vw: number
   return { left, top };
 }
 
+/** Where a submenu goes: beside its item, on the right unless that would leave the window, and never below the bottom. */
+export function placeSubmenu(item: { left: number; right: number; top: number }, w: number, h: number, vw: number, vh: number, margin = 6) {
+  const left = item.right + w + margin <= vw ? item.right - 2 : Math.max(margin, item.left - w + 2);
+  const top = Math.max(margin, Math.min(item.top - 4, vh - h - margin));
+  return { left, top };
+}
+
 /** Next enabled item for arrow-key navigation (wraps around). */
 export function stepItem(disabled: boolean[], from: number, dir: 1 | -1) {
   const n = disabled.length;

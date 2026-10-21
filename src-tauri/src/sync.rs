@@ -106,10 +106,10 @@ pub async fn sync_all() -> Result<SyncReport> {
     let mut errors = vec![];
     for acc in &accounts {
         let account_id = ensure_account(acc)?;
-        let r = if acc.provider == "google" {
-            auth::in_account(Some(acc.email.clone()), crate::google::sync_account(&account_id)).await
-        } else {
-            auth::in_account(Some(acc.email.clone()), sync_microsoft(&account_id)).await
+        let r = match acc.provider.as_str() {
+            "google" => auth::in_account(Some(acc.email.clone()), crate::google::sync_account(&account_id)).await,
+            crate::imap::PROVIDER => auth::in_account(Some(acc.email.clone()), crate::imap::sync_account(&account_id)).await,
+            _ => auth::in_account(Some(acc.email.clone()), sync_microsoft(&account_id)).await,
         };
         match r {
             Ok(part) => {
@@ -158,6 +158,8 @@ async fn sync_microsoft(account_id: &str) -> Result<SyncReport> {
             rep.calendar_error = Some(e.to_string());
         }
     }
+    // Contacts come last and never hold up mail or calendar: how they went is shown in the Contacts view.
+    let _ = crate::contacts::sync_account(account_id, false).await;
     Ok(rep)
 }
 

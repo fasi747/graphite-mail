@@ -34,14 +34,14 @@ const onDay = (e: Ev, day: Date) => {
   return s < d1 && (e.is_all_day ? en > d0 : en > d0 || sameDay(s, day));
 };
 
-export default function CalendarView({ calendars, hidden, onToast, newRequest }: { calendars: Cal[]; hidden: Set<string>; onToast: (t: string) => void; newRequest?: { teams: boolean; n: number } }) {
+export default function CalendarView({ calendars, hidden, onToast, newRequest }: { calendars: Cal[]; hidden: Set<string>; onToast: (t: string) => void; newRequest?: { teams: boolean; n: number; attendees?: string[]; account?: string } }) {
   const [mode, setMode] = useState<"week" | "month">(() => (localStorage.getItem("calMode") as "week" | "month") || "week");
   const [anchor, setAnchor] = useState(startOfDay(new Date()));
   const [events, setEvents] = useState<Ev[]>([]);
   const [sel, setSel] = useState<Ev | null>(null);
-  const [creating, setCreating] = useState<{ start: Date; allDay: boolean; teams?: boolean } | null>(null);
+  const [creating, setCreating] = useState<{ start: Date; allDay: boolean; teams?: boolean; attendees?: string[]; account?: string } | null>(null);
   // The ribbon's "New Meeting" / "New Event" buttons ask for the editor via newRequest.
-  useEffect(() => { if (newRequest && newRequest.n > 0) setCreating({ start: nextHalfHour(), allDay: false, teams: newRequest.teams }); }, [newRequest?.n]);
+  useEffect(() => { if (newRequest && newRequest.n > 0) setCreating({ start: nextHalfHour(), allDay: false, teams: newRequest.teams, attendees: newRequest.attendees, account: newRequest.account }); }, [newRequest?.n]);
   const grid = useRef<HTMLDivElement>(null);
 
   const range = useMemo(() => {
@@ -244,14 +244,16 @@ const toLocalInput = (d: Date, dateOnly: boolean) => {
   return dateOnly ? date : `${date}T${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { start: Date; allDay: boolean; teams?: boolean }; calendars: Cal[]; onClose: () => void; onCreated: () => void; onError: (t: string) => void }) {
+function NewEvent({ init, calendars, onClose, onCreated, onError }: { init: { start: Date; allDay: boolean; teams?: boolean; attendees?: string[]; account?: string }; calendars: Cal[]; onClose: () => void; onCreated: () => void; onError: (t: string) => void }) {
   const [title, setTitle] = useState("");
   const [allDay, setAllDay] = useState(init.allDay);
   const [start, setStart] = useState(toLocalInput(init.start, init.allDay));
   const [end, setEnd] = useState(toLocalInput(init.allDay ? init.start : new Date(init.start.getTime() + 3600e3), init.allDay));
-  const [calId, setCalId] = useState(calendars.find((c) => c.is_primary)?.id ?? calendars[0]?.id ?? "");
+  // A meeting started from a contact goes in that account's calendar.
+  const mine = calendars.filter((c) => !init.account || c.account_email.toLowerCase() === init.account.toLowerCase());
+  const [calId, setCalId] = useState((mine.find((c) => c.is_primary) ?? mine[0] ?? calendars.find((c) => c.is_primary) ?? calendars[0])?.id ?? "");
   const [location, setLocation] = useState("");
-  const [people, setPeople] = useState("");
+  const [people, setPeople] = useState((init.attendees ?? []).join(", "));
   const [teams, setTeams] = useState(!!init.teams);
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState("");

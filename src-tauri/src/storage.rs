@@ -124,6 +124,10 @@ fn migrate(conn: &Connection) -> Result<()> {
             "ALTER TABLE offline_mutation_queue ADD COLUMN failed INTEGER DEFAULT 0",
         )?;
     }
+    if !has("contacts", "given_name")? {
+        // v1.10.1: name parts for vCard export (filled in by the next contacts sync).
+        conn.execute_batch("ALTER TABLE contacts ADD COLUMN given_name TEXT; ALTER TABLE contacts ADD COLUMN surname TEXT;")?;
+    }
     Ok(())
 }
 
@@ -256,6 +260,49 @@ CREATE TABLE IF NOT EXISTS message_labels (
 );
 CREATE INDEX IF NOT EXISTS idx_message_labels_folder ON message_labels(folder_id);
 
+-- IMAP accounts: every (folder, UID) a message is stored under on the server. message_id has no foreign key
+-- on purpose: after a message is deleted here, its location is still needed to delete it on the server.
+CREATE TABLE IF NOT EXISTS imap_uids (
+    folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    uid INTEGER NOT NULL,
+    validity INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (folder_id, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_imap_uids_message ON imap_uids(message_id);
+
+-- Microsoft 365 contacts, kept on this computer only: the organisation's directory and the user's own contacts.
+CREATE TABLE IF NOT EXISTS contacts (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,              -- 'directory' or 'personal'
+    remote_id TEXT NOT NULL,
+    folder_id TEXT,                    -- personal: the contact folder it is in
+    folder_name TEXT,
+    display_name TEXT NOT NULL,
+    given_name TEXT,
+    surname TEXT,
+    emails_json TEXT NOT NULL DEFAULT '[]',
+    phones_json TEXT NOT NULL DEFAULT '[]',
+    job_title TEXT,
+    department TEXT,
+    office TEXT,
+    company TEXT,
+    search_text TEXT NOT NULL DEFAULT '',  -- lower-case name, emails, title, department for searching
+    sync_gen INTEGER NOT NULL DEFAULT 0,   -- full listings: rows not seen in the latest one are removed
+    UNIQUE(account_id, source, remote_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_list ON contacts(account_id, source, display_name);
+
+-- Contacts marked as favourites (by their Graph id, so they survive a refresh). Go with the account.
+CREATE TABLE IF NOT EXISTS contact_favourites (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    remote_id TEXT NOT NULL,
+    PRIMARY KEY (account_id, source, remote_id)
+);
+
 -- Per-account sync bookmarks (e.g. Gmail history id).
 CREATE TABLE IF NOT EXISTS account_state (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -317,5 +364,17 @@ mod tests {
         let c = rusqlite::Connection::open_in_memory().unwrap();
         c.execute_batch(super::SCHEMA).unwrap();
         c.execute_batch(super::SCHEMA).unwrap(); // idempotent
+    }
+
+    #[test]
+    fn a_v1_10_0_contacts_table_gets_name_columns() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        // The contacts table as v1.10.0 created it (no name parts).
+        c.execute_batch(&super::SCHEMA.replace("    given_name TEXT,\n    surname TEXT,\n", "")).unwrap();
+        c.execute_batch("INSERT INTO accounts(id,email,created_at) VALUES('a','me@x.com',0); INSERT INTO contacts(id,account_id,source,remote_id,display_name) VALUES('c','a','personal','r','Ana');").unwrap();
+        super::migrate(&c).unwrap();
+        let (g, s): (Option<String>, Option<String>) = c.query_row("SELECT given_name, surname FROM contacts", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((g, s), (None, None), "kept the contact, added the columns");
+        super::migrate(&c).unwrap(); // and again: nothing to do
     }
 }

@@ -14,7 +14,6 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -80,6 +79,11 @@ fn resolve_client(env_id: Option<String>, env_secret: Option<String>, built_id: 
     Ok((id, secret))
 }
 
+/// Whether this build can sign in to Google (it was built with the Google client secret, or one is set at run time).
+pub fn sign_in_available() -> bool {
+    client().is_ok()
+}
+
 fn client() -> Result<(String, String)> {
     resolve_client(std::env::var("GRAPHITE_GOOGLE_CLIENT_ID").ok(), std::env::var("GRAPHITE_GOOGLE_CLIENT_SECRET").ok(), CLIENT_ID, CLIENT_SECRET)
 }
@@ -137,9 +141,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
     }
     open(u.as_str())?;
 
-    let code = tokio::time::timeout(Duration::from_secs(300), auth::wait_for_code(&listener, &state))
-        .await
-        .map_err(|_| anyhow!("Sign-in timed out"))??;
+    let code = auth::wait_for_sign_in(&listener, &state).await?;
 
     let mut form = vec![
         ("client_id", client_id.as_str()),
@@ -164,7 +166,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
 
     let me: Value = crate::http::client().get(USERINFO_URL).bearer_auth(&tok.access_token).send().await?.error_for_status()?.json().await?;
     let email = me["email"].as_str().ok_or_else(|| anyhow!("Google didn't tell us the account's email address."))?.to_string();
-    let acc = auth::Account { display_name: me["name"].as_str().unwrap_or(&email).to_string(), email, provider: "google".into(), rules };
+    let acc = auth::Account { display_name: me["name"].as_str().unwrap_or(&email).to_string(), email, provider: "google".into(), rules, contacts: false };
     auth::remember(&acc, &rt)?;
     auth::cache_token(&acc.email, &tok.access_token, tok.expires_in);
     Ok(acc)
@@ -363,7 +365,7 @@ pub struct Parsed {
     pub file_bytes: Vec<Vec<u8>>,
 }
 
-fn people(a: Option<&mail_parser::Address>) -> String {
+pub(crate) fn people(a: Option<&mail_parser::Address>) -> String {
     let list: Vec<Value> = a
         .map(|a| a.iter().map(|x| json!({ "name": x.name(), "address": x.address() })).collect())
         .unwrap_or_default();
@@ -728,7 +730,9 @@ pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str
     fn addrs(l: &[String]) -> Address<'_> {
         Address::from(l.iter().map(|a| Address::new_address(None::<&str>, a.as_str())).collect::<Vec<_>>())
     }
-    let mut b = MessageBuilder::new().from(from).to(addrs(to)).subject(subject).html_body(html).text_body(sync::strip_html(html));
+    // No display name: just the address (not an empty "" name).
+    let sender = if from.0.trim().is_empty() { Address::new_address(None::<&str>, from.1) } else { Address::from(from) };
+    let mut b = MessageBuilder::new().from(sender).to(addrs(to)).subject(subject).html_body(html).text_body(sync::strip_html(html));
     if !cc.is_empty() {
         b = b.cc(addrs(cc));
     }
