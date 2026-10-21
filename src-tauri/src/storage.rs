@@ -128,6 +128,10 @@ fn migrate(conn: &Connection) -> Result<()> {
         // v1.10.1: name parts for vCard export (filled in by the next contacts sync).
         conn.execute_batch("ALTER TABLE contacts ADD COLUMN given_name TEXT; ALTER TABLE contacts ADD COLUMN surname TEXT;")?;
     }
+    if !has("drafts", "bcc_text")? {
+        // v1.10.3: blind copies in drafts.
+        conn.execute_batch("ALTER TABLE drafts ADD COLUMN bcc_text TEXT NOT NULL DEFAULT ''")?;
+    }
     Ok(())
 }
 
@@ -319,6 +323,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     from_email TEXT,
     to_text TEXT NOT NULL DEFAULT '',
     cc_text TEXT NOT NULL DEFAULT '',
+    bcc_text TEXT NOT NULL DEFAULT '',
     subject TEXT NOT NULL DEFAULT '',
     html TEXT NOT NULL DEFAULT '',
     attachments_json TEXT NOT NULL DEFAULT '[]',
@@ -376,5 +381,16 @@ mod tests {
         let (g, s): (Option<String>, Option<String>) = c.query_row("SELECT given_name, surname FROM contacts", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((g, s), (None, None), "kept the contact, added the columns");
         super::migrate(&c).unwrap(); // and again: nothing to do
+    }
+
+    #[test]
+    fn a_v1_10_2_drafts_table_gets_a_bcc_column() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(&super::SCHEMA.replace("    bcc_text TEXT NOT NULL DEFAULT '',\n", "")).unwrap();
+        c.execute_batch("INSERT INTO drafts(id,to_text,updated_at) VALUES('d','a@b.c',1)").unwrap();
+        super::migrate(&c).unwrap();
+        let bcc: String = c.query_row("SELECT bcc_text FROM drafts WHERE id='d'", [], |r| r.get(0)).unwrap();
+        assert_eq!(bcc, "", "kept the draft, added the column");
+        super::migrate(&c).unwrap();
     }
 }

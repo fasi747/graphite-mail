@@ -38,3 +38,31 @@
 - Test counts after Task 1: Rust 69, frontend 76 (12 files). tsc clean.
 - Needs a real-world check: pressing Cancel while a real browser tab is open (the tab then shows "Sign-in was cancelled
   or failed"); menu-key behaviour inside the real WebView.
+
+## Task 2 — Bcc (v1.10.3)  ✅
+- Frontend (`src/Compose.tsx`): `bcc` state, "Bcc" link on the Cc row (`.fieldlink`, same borderless `.field` row style),
+  the Bcc row appears below Cc and uses `RecipientInput` (same contact suggestions as To/Cc). Send validates all three
+  lists and allows Bcc-only messages. Drafts save/restore `bcc`; `Mailbox.tsx` passes `bcc` when reopening a draft.
+  Reply / reply-all / forward never pre-fill Bcc.
+- Rust: `outbox::Draft.bcc` (serde default, so old queued items still parse); the queued payload carries `"bcc"`.
+  - **Microsoft Graph**: `bccRecipients` on `/me/sendMail`, on `createReply/createReplyAll/createForward` + PATCH
+    (attachments path), and on `/reply`, `/replyAll`, `/forward`. A forward's top-level `toRecipients` stays To only.
+  - **Gmail API (Google sign-in)**: `build_raw()` takes `bcc`; it writes a `Bcc:` header because the Gmail API derives
+    envelope recipients from the headers and strips Bcc on delivery (documented Gmail behaviour; cannot be observed in
+    the sandbox, see "needs a real-world check").
+  - **IMAP/SMTP (app password)**: `build_raw()` is called with no Bcc at all; the blind copies are added to the lettre
+    `Envelope` (RCPT TO). The message data contains neither a Bcc header nor the address.
+  - Drafts: `bcc_text` column, schema + `migrate()` + migration test.
+- Tests (Rust +3 → 72): `outbox::blind_copies_never_leak_into_graph_to_or_cc` (new/reply/replyAll/forward against the
+  fake Graph: address appears exactly once, in bccRecipients), `google::blind_copies_are_a_bcc_header_for_the_gmail_api_
+  and_nothing_else`, the Gmail end-to-end test asserts the raw sent to the fake Gmail API, the IMAP end-to-end test
+  asserts RCPT TO has the blind copy and the DATA has no Bcc header, the attachments test asserts the draft-with-files
+  Graph body, storage migration test. Frontend +5 → 81 (Bcc link, suggestions, send payload split, Bcc-only send and
+  validation, draft round trip, replies start empty).
+- Decision: Bcc-only messages (no To) are allowed, as in Outlook/Gmail. If this isn't wanted, re-add the To check in
+  `Compose.send()`.
+- Fixed on the way: `Compose` wrote the signature into the editor after unmount (seen as an unhandled error in tests).
+- Needs a real-world check: Gmail API strips the Bcc header for the other recipients (send a Bcc'd message from a
+  Google-signed-in account and inspect what the To recipient receives); Outlook reply/forward with Bcc delivers to the
+  blind copy; Gmail SMTP sent copy (Gmail's Sent Mail) doesn't show the Bcc (expected, same as other clients).
+- Counts after Task 2: Rust 72, frontend 81. tsc clean. Version 1.10.3.

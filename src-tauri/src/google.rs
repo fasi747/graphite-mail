@@ -724,7 +724,9 @@ pub async fn sync_account(account_id: &str) -> Result<sync::SyncReport> {
 // ---------------------------------------------------------------- sending
 
 /// Builds the RFC 5322 message Gmail sends. `reply` = (Message-ID of the original, its References).
-pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str, html: &str, reply: Option<(&str, &str)>, files: &[OutFile]) -> Result<Vec<u8>> {
+/// `bcc` is written as a `Bcc:` header: only pass it where the provider turns that header into envelope recipients and
+/// removes it before delivery (the Gmail API does). SMTP callers pass none and put blind copies in the envelope instead.
+pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], bcc: &[String], subject: &str, html: &str, reply: Option<(&str, &str)>, files: &[OutFile]) -> Result<Vec<u8>> {
     use mail_builder::MessageBuilder;
     use mail_builder::headers::address::Address;
     fn addrs(l: &[String]) -> Address<'_> {
@@ -735,6 +737,9 @@ pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str
     let mut b = MessageBuilder::new().from(sender).to(addrs(to)).subject(subject).html_body(html).text_body(sync::strip_html(html));
     if !cc.is_empty() {
         b = b.cc(addrs(cc));
+    }
+    if !bcc.is_empty() {
+        b = b.bcc(addrs(bcc));
     }
     for (name, mime, bytes) in files {
         b = b.attachment(mime.clone(), name.clone(), bytes.clone());
@@ -786,7 +791,8 @@ async fn send_message(entity: &str, rid: Option<&str>, p: &Value) -> Result<(u16
             files.push((n, m, b));
         }
     }
-    let raw = build_raw((&name, &email), &list("to"), &list("cc"), p["subject"].as_str().unwrap_or_default(), p["html"].as_str().unwrap_or_default(), reply, &files)?;
+    // The Gmail API takes recipients from the headers only; Gmail removes the Bcc header from what it delivers.
+    let raw = build_raw((&name, &email), &list("to"), &list("cc"), &list("bcc"), p["subject"].as_str().unwrap_or_default(), p["html"].as_str().unwrap_or_default(), reply, &files)?;
     let mut body = json!({ "raw": auth::b64(&raw) });
     if let Some((_, Some(thread))) = &original {
         body["threadId"] = json!(thread);
@@ -1334,8 +1340,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn blind_copies_are_a_bcc_header_for_the_gmail_api_and_nothing_else() {
+        // Without blind copies there is no Bcc header at all.
+        let raw = build_raw(("Me", "g@x.com"), &["a@b.c".into()], &["c@d.e".into()], &[], "Hi", "<p>x</p>", None, &[]).unwrap();
+        let text = String::from_utf8_lossy(&raw).to_string();
+        assert!(!text.to_ascii_lowercase().contains("bcc"), "{text}");
+        // With them, the Gmail API needs the Bcc header (it turns it into envelope recipients and strips it on delivery);
+        // the address must not be in To or Cc.
+        let raw = build_raw(("Me", "g@x.com"), &["a@b.c".into()], &["c@d.e".into()], &["hidden@x.com".into()], "Hi", "<p>x</p>", None, &[]).unwrap();
+        let text = String::from_utf8_lossy(&raw).to_string();
+        let header = |name: &str| text.lines().find(|l| l.starts_with(name)).unwrap_or("").to_string();
+        assert_eq!(header("Bcc:"), "Bcc: <hidden@x.com>");
+        assert!(!header("To:").contains("hidden") && !header("Cc:").contains("hidden"), "{text}");
+        assert_eq!(text.matches("hidden@x.com").count(), 1);
+    }
+
+    #[test]
     fn builds_replies_that_thread() {
-        let raw = build_raw(("Me", "g@x.com"), &["a@b.c".into()], &["c@d.e".into()], "Re: Plans", "<p>Yes</p>", Some(("<orig-1@example.com>", "")), &[]).unwrap();
+        let raw = build_raw(("Me", "g@x.com"), &["a@b.c".into()], &["c@d.e".into()], &[], "Re: Plans", "<p>Yes</p>", Some(("<orig-1@example.com>", "")), &[]).unwrap();
         let text = String::from_utf8_lossy(&raw).to_string();
         assert!(text.contains("In-Reply-To: <orig-1@example.com>"), "{text}");
         assert!(text.contains("References: <orig-1@example.com>"));
@@ -1526,15 +1548,21 @@ pub(crate) mod tests {
 
         // replying joins the conversation and comes from the receiving account
         log.lock().unwrap().clear();
-        crate::outbox::send(crate::outbox::Draft { mode: "reply".into(), reply_to: Some(m1l.clone()), to: vec!["mum@example.com".into()], cc: vec![], subject: "Re: Budget review".into(), html: "<p>Thanks</p>".into(), from: None, attachments: vec![] }).unwrap();
-        crate::outbox::send(crate::outbox::Draft { mode: "new".into(), reply_to: None, to: vec!["z@z.com".into()], cc: vec![], subject: "Hello".into(), html: "<p>New</p>".into(), from: Some("g@x.com".into()), attachments: vec![] }).unwrap();
+        crate::outbox::send(crate::outbox::Draft { mode: "reply".into(), reply_to: Some(m1l.clone()), to: vec!["mum@example.com".into()], cc: vec![], bcc: vec![], subject: "Re: Budget review".into(), html: "<p>Thanks</p>".into(), from: None, attachments: vec![] }).unwrap();
+        crate::outbox::send(crate::outbox::Draft { mode: "new".into(), reply_to: None, to: vec!["z@z.com".into()], cc: vec![], bcc: vec!["hidden@z.com".into()], subject: "Hello".into(), html: "<p>New</p>".into(), from: Some("g@x.com".into()), attachments: vec![] }).unwrap();
         crate::outbox::replay().await.unwrap();
         let sends: Vec<Value> = log.lock().unwrap().iter().filter(|(_, p, _)| p.ends_with("/messages/send")).map(|(_, _, b)| b.clone()).collect();
         assert_eq!(sends.len(), 2);
         assert_eq!(sends[0]["threadId"], "t-m1");
         let raw = String::from_utf8(unb64(sends[0]["raw"].as_str().unwrap()).unwrap()).unwrap();
         assert!(raw.contains("In-Reply-To: <orig-1@example.com>") && raw.contains("Subject: Re: Budget review") && raw.contains("Gee"), "{raw}");
+        assert!(!raw.to_ascii_lowercase().contains("bcc"), "a reply without blind copies has no Bcc header: {raw}");
         assert!(sends[1]["threadId"].is_null());
+        // The blind copy goes to the Gmail API as a Bcc header only (Gmail strips it on delivery), never in To/Cc.
+        let raw = String::from_utf8(unb64(sends[1]["raw"].as_str().unwrap()).unwrap()).unwrap();
+        let header = |name: &str| raw.lines().find(|l| l.starts_with(name)).unwrap_or("").to_string();
+        assert_eq!((header("To:"), header("Bcc:")), ("To: <z@z.com>".to_string(), "Bcc: <hidden@z.com>".to_string()), "{raw}");
+        assert!(!header("Cc:").contains("hidden") && raw.matches("hidden@z.com").count() == 1, "{raw}");
 
         // ---- calendar actions
         log.lock().unwrap().clear();

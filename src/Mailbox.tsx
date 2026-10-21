@@ -25,7 +25,7 @@ type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
   snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean; account_email: string;
 };
-type DraftRow = { id: string; mode: ComposeInit["mode"]; reply_to: string | null; from: string | null; to: string; cc: string; subject: string; html: string; attachments: string[]; updated_at: number };
+type DraftRow = { id: string; mode: ComposeInit["mode"]; reply_to: string | null; from: string | null; to: string; cc: string; bcc?: string; subject: string; html: string; attachments: string[]; updated_at: number };
 type Att = { id: string; name: string; mime: string; size: number; downloaded: boolean };
 type QueueItem = { seq: number; what: string; failed: boolean; tries: number; error: string | null };
 type Detail = Msg & { to_json: string | null; cc_json: string | null; body_html: string | null };
@@ -158,7 +158,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const splitAddr = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
   const openDraft = (d: DraftRow) => {
     setDraftsOpen(false);
-    setCompose({ mode: d.mode, replyTo: d.reply_to ?? undefined, from: d.from ?? undefined, to: splitAddr(d.to), cc: splitAddr(d.cc), subject: d.subject, draftId: d.id, html: d.html, attachments: d.attachments });
+    setCompose({ mode: d.mode, replyTo: d.reply_to ?? undefined, from: d.from ?? undefined, to: splitAddr(d.to), cc: splitAddr(d.cc), bcc: splitAddr(d.bcc ?? ""), subject: d.subject, draftId: d.id, html: d.html, attachments: d.attachments });
   };
   const [tab, setTab] = useState<RibbonTab>("home");
   const [meetingReq, setMeetingReq] = useState<{ teams: boolean; n: number; attendees?: string[]; account?: string }>({ teams: true, n: 0 });

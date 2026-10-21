@@ -1218,7 +1218,7 @@ fn transport(email: &str, pw: &Secret) -> Result<lettre::AsyncSmtpTransport<lett
 async fn send(email: &str, entity: &str, p: &Value) -> Result<()> {
     use lettre::AsyncTransport;
     let list = |k: &str| p[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>()).unwrap_or_default();
-    let (to, cc) = (list("to"), list("cc"));
+    let (to, cc, bcc) = (list("to"), list("cc"), list("bcc"));
     let name: String = storage::with_db(|db| {
         Ok(db.query_row("SELECT display_name FROM accounts WHERE lower(email)=lower(?1)", [email], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())
     })?
@@ -1248,9 +1248,10 @@ async fn send(email: &str, entity: &str, p: &Value) -> Result<()> {
             }
         }
     }
-    let raw = google::build_raw((&name, email), &to, &cc, p["subject"].as_str().unwrap_or_default(), p["html"].as_str().unwrap_or_default(), original.as_deref().map(|m| (m, "")), &files)?;
+    // Blind copies never go into the message: they are SMTP envelope recipients only (RCPT TO), so no header names them.
+    let raw = google::build_raw((&name, email), &to, &cc, &[], p["subject"].as_str().unwrap_or_default(), p["html"].as_str().unwrap_or_default(), original.as_deref().map(|m| (m, "")), &files)?;
     let parse = |a: &str| a.trim().parse::<lettre::Address>().map_err(|_| refused(400, format!("“{a}” is not a valid email address.")));
-    let rcpts = to.iter().chain(&cc).map(|a| parse(a)).collect::<Result<Vec<_>>>()?;
+    let rcpts = to.iter().chain(&cc).chain(&bcc).map(|a| parse(a)).collect::<Result<Vec<_>>>()?;
     if rcpts.is_empty() {
         return Err(refused(400, "The message has no recipients."));
     }

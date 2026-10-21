@@ -218,6 +218,10 @@ pub struct Draft {
     pub reply_to: Option<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    /// Blind copies: each provider path keeps them out of the headers other recipients see
+    /// (Graph `bccRecipients`, Gmail API `Bcc` header that Gmail strips on delivery, SMTP envelope only).
+    #[serde(default)]
+    pub bcc: Vec<String>,
     pub subject: String,
     pub html: String,
     /// Account to send from (email). Replies always go from the account that received the message.
@@ -252,7 +256,7 @@ pub fn send(d: Draft) -> Result<()> {
             db,
             &entity,
             "SEND",
-            json!({ "mode": d.mode, "to": d.to, "cc": d.cc, "subject": d.subject, "html": d.html, "attachments": files }),
+            json!({ "mode": d.mode, "to": d.to, "cc": d.cc, "bcc": d.bcc, "subject": d.subject, "html": d.html, "attachments": files }),
             from.or_else(auth::active_email),
         )
     })
@@ -420,7 +424,7 @@ async fn send_with_files(base: &str, p: &Value, rid: Option<&str>) -> Result<(u1
     let mode = p["mode"].as_str().unwrap_or("new");
     let fields = json!({
         "subject": p["subject"], "body": { "contentType": "HTML", "content": p["html"] },
-        "toRecipients": recipients(&p["to"]), "ccRecipients": recipients(&p["cc"]),
+        "toRecipients": recipients(&p["to"]), "ccRecipients": recipients(&p["cc"]), "bccRecipients": recipients(&p["bcc"]),
     });
     let (s, v) = match (mode, rid) {
         ("new", _) | (_, None) => call(Method::POST, &format!("{base}/me/messages"), Some(fields.clone())).await?,
@@ -582,7 +586,7 @@ pub async fn replay() -> Result<usize> {
             ("SEND", _) => {
                 let msg = json!({
                     "subject": p["subject"], "body": { "contentType": "HTML", "content": p["html"] },
-                    "toRecipients": recipients(&p["to"]), "ccRecipients": recipients(&p["cc"]),
+                    "toRecipients": recipients(&p["to"]), "ccRecipients": recipients(&p["cc"]), "bccRecipients": recipients(&p["bcc"]),
                 });
                 match (p["mode"].as_str().unwrap_or("new"), &rid) {
                     ("new", _) | (_, None) => {
@@ -928,6 +932,51 @@ mod tests {
         assert!(overview().unwrap()[0].error.is_some());
     }
 
+    /// Blind copies reach Microsoft Graph only as `bccRecipients`: never in To or Cc, and never at a forward's top level.
+    #[tokio::test]
+    async fn blind_copies_never_leak_into_graph_to_or_cc() {
+        let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("gm-bcc-{}", uuid::Uuid::new_v4()));
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg"));
+            std::env::set_var("GM_TEST_TOKEN", "t");
+        }
+        storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
+        storage::with_db(|db| {
+            db.execute_batch(
+                "INSERT INTO accounts(id,email,display_name,created_at) VALUES('a','me@x.com','Me',0);
+                 INSERT INTO folders(id,account_id,remote_id,display_name) VALUES('f','a','rf','Inbox');
+                 INSERT INTO messages(id,account_id,folder_id,remote_id,received_at) VALUES('m1','a','f','r1',1);",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let draft = |mode: &str, reply_to: Option<&str>| Draft {
+            mode: mode.into(), reply_to: reply_to.map(String::from), to: vec!["a@x.com".into()], cc: vec!["c@x.com".into()],
+            bcc: vec!["hidden@x.com".into()], subject: "Hi".into(), html: "<p>hi</p>".into(), from: Some("me@x.com".into()), attachments: vec![],
+        };
+        let addresses = |v: &Value| -> Vec<String> {
+            v.as_array().map(|a| a.iter().map(|r| r["emailAddress"]["address"].as_str().unwrap_or_default().to_string()).collect()).unwrap_or_default()
+        };
+        for (mode, reply_to) in [("new", None), ("reply", Some("m1")), ("replyAll", Some("m1")), ("forward", Some("m1"))] {
+            let (url, seen) = fake_graph(vec![202]).await;
+            unsafe { std::env::set_var("GM_TEST_GRAPH", &url) };
+            send(draft(mode, reply_to)).unwrap();
+            assert_eq!(replay().await.unwrap(), 1, "{mode}");
+            let req = seen.lock().unwrap()[0].clone();
+            let body: Value = serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            let msg = &body["message"];
+            assert_eq!(addresses(&msg["toRecipients"]), vec!["a@x.com"], "{mode}: To is only the To address");
+            assert_eq!(addresses(&msg["ccRecipients"]), vec!["c@x.com"], "{mode}: Cc is only the Cc address");
+            assert_eq!(addresses(&msg["bccRecipients"]), vec!["hidden@x.com"], "{mode}: the blind copy is a bccRecipient");
+            if mode == "forward" {
+                assert_eq!(addresses(&body["toRecipients"]), vec!["a@x.com"], "a forward's top-level recipients leave the blind copy out");
+            }
+            // Nowhere else: the address appears exactly once in the whole request (inside bccRecipients).
+            assert_eq!(req.matches("hidden@x.com").count(), 1, "{mode}: {req}");
+        }
+    }
+
     #[test]
     fn accounts_stay_separate() {
         let _guard = storage::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -948,14 +997,14 @@ mod tests {
         // ...but moving within its account works.
         move_to("mb", "fb2").unwrap();
         // A reply is queued for the account that received the message, whatever "from" says.
-        send(Draft { mode: "reply".into(), reply_to: Some("mb".into()), to: vec!["x@z.com".into()], cc: vec![], subject: "Re".into(), html: "hi".into(), from: Some("work@x.com".into()), attachments: vec![] }).unwrap();
+        send(Draft { mode: "reply".into(), reply_to: Some("mb".into()), to: vec!["x@z.com".into()], cc: vec![], bcc: vec![], subject: "Re".into(), html: "hi".into(), from: Some("work@x.com".into()), attachments: vec![] }).unwrap();
         let acct: String = storage::with_db(|db| {
             Ok(db.query_row("SELECT a.email FROM offline_mutation_queue q JOIN accounts a ON a.id=q.account_id WHERE q.operation='SEND'", [], |r| r.get(0))?)
         })
         .unwrap();
         assert_eq!(acct, "home@y.com");
         // A new message goes from the chosen account.
-        send(Draft { mode: "new".into(), reply_to: None, to: vec!["x@z.com".into()], cc: vec![], subject: "Hi".into(), html: "hi".into(), from: Some("work@x.com".into()), attachments: vec![] }).unwrap();
+        send(Draft { mode: "new".into(), reply_to: None, to: vec!["x@z.com".into()], cc: vec![], bcc: vec![], subject: "Hi".into(), html: "hi".into(), from: Some("work@x.com".into()), attachments: vec![] }).unwrap();
         let n: i64 = storage::with_db(|db| {
             Ok(db.query_row("SELECT COUNT(*) FROM offline_mutation_queue q JOIN accounts a ON a.id=q.account_id WHERE q.operation='SEND' AND a.email='work@x.com'", [], |r| r.get(0))?)
         })

@@ -864,21 +864,24 @@ async fn gmail_with_an_app_password_end_to_end() {
     }
 
     // 8. Sending: a reply joins the conversation; a forward carries the original's attachment.
-    outbox::send(outbox::Draft { mode: "reply".into(), reply_to: Some(m5.clone()), to: vec!["ana@x.test".into()], cc: vec!["cc@x.test".into()], subject: "Re: Lunch?".into(), html: "<p>Yes!</p>".into(), from: None, attachments: vec![] }).unwrap();
-    outbox::send(outbox::Draft { mode: "forward".into(), reply_to: Some(m2.clone()), to: vec!["bob@x.test".into()], cc: vec![], subject: "Fw: Quarterly report".into(), html: "<p>FYI</p>".into(), from: None, attachments: vec![] }).unwrap();
+    outbox::send(outbox::Draft { mode: "reply".into(), reply_to: Some(m5.clone()), to: vec!["ana@x.test".into()], cc: vec!["cc@x.test".into()], bcc: vec!["hidden@x.test".into()], subject: "Re: Lunch?".into(), html: "<p>Yes!</p>".into(), from: None, attachments: vec![] }).unwrap();
+    outbox::send(outbox::Draft { mode: "forward".into(), reply_to: Some(m2.clone()), to: vec!["bob@x.test".into()], cc: vec![], bcc: vec![], subject: "Fw: Quarterly report".into(), html: "<p>FYI</p>".into(), from: None, attachments: vec![] }).unwrap();
     assert_eq!(outbox::replay().await.unwrap(), 2);
     {
         let o = out.lock().unwrap();
         assert_eq!(o.sent.len(), 2);
         let (user, from, rcpts, data) = &o.sent[0];
         assert_eq!((user.as_str(), from.as_str()), ("me@gmail.com", "me@gmail.com"));
-        assert_eq!(rcpts, &vec!["ana@x.test".to_string(), "cc@x.test".to_string()]);
+        // The blind copy is an SMTP envelope recipient (RCPT TO) and appears nowhere in the message itself.
+        assert_eq!(rcpts, &vec!["ana@x.test".to_string(), "cc@x.test".to_string(), "hidden@x.test".to_string()]);
+        assert!(!data.contains("hidden@x.test") && !data.to_ascii_lowercase().contains("bcc"), "no Bcc header over SMTP: {data}");
+        assert!(data.contains("To: <ana@x.test>") && data.contains("Cc: <cc@x.test>"), "{data}");
         assert!(data.contains("In-Reply-To: <m5@mail.test>") && data.contains("Subject: Re: Lunch?"), "{data}");
         assert!(data.contains("From: <me@gmail.com>") && !data.contains("\"\""), "no empty display name: {data}");
         assert!(o.sent[1].3.contains("report.pdf"), "forward keeps the attachment");
     }
     // A recipient the server can't take is refused for good, never sent twice.
-    outbox::send(outbox::Draft { mode: "new".into(), reply_to: None, to: vec!["not an address".into()], cc: vec![], subject: "x".into(), html: "x".into(), from: Some("me@gmail.com".into()), attachments: vec![] }).unwrap();
+    outbox::send(outbox::Draft { mode: "new".into(), reply_to: None, to: vec!["not an address".into()], cc: vec![], bcc: vec![], subject: "x".into(), html: "x".into(), from: Some("me@gmail.com".into()), attachments: vec![] }).unwrap();
     outbox::replay().await.unwrap();
     assert!(outbox::overview().unwrap()[0].failed);
     outbox::discard_failed().unwrap();

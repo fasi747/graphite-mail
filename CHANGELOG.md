@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.10.3 — Bcc
+- **Bcc** in the editor for every account type. The row is hidden until you press the **Bcc** link beside Cc (it opens
+  by itself when a draft already has blind copies). Suggestions from the account's contacts work there like in To/Cc.
+  A message with only blind copies can be sent. Drafts keep their Bcc (new `bcc_text` column, added by a migration).
+- Blind copies never reach other recipients' headers: Microsoft 365 sends them as `bccRecipients` (plain sends, drafts
+  with attachments, replies and forwards alike); Gmail through Google sign-in gets a `Bcc` header that the Gmail API
+  turns into envelope recipients and removes before delivery; Gmail with an app password puts them in the SMTP envelope
+  only (RCPT TO) and writes no Bcc header at all. Tests against fake Graph, Gmail and SMTP servers prove each path.
+- Replies, reply-all and forwards start with an empty Bcc (a received message's blind copies are never known).
+- Fixed: closing the editor while its signature was still loading could throw.
+
 ## 1.10.2 — Safer menus and first-run sign-in
 - Mail list right-click menu: the keyboard never starts on Delete, Block sender or Mark as spam. When the items above
   them are unavailable (several messages selected, or the message still loading) focus starts on the next safe item,

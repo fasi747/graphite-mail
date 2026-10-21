@@ -9,6 +9,8 @@ export type ComposeInit = {
   replyTo?: string;
   to?: string[];
   cc?: string[];
+  /** Blind copies. Never carried over from a received message (replies and forwards start without any). */
+  bcc?: string[];
   subject?: string;
   quoteHtml?: string;
   quoteHeader?: string;
@@ -30,6 +32,9 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   const [from, setFrom] = useState(init.from ?? accounts[0]?.email ?? "");
   const [to, setTo] = useState((init.to ?? []).join(", "));
   const [cc, setCc] = useState((init.cc ?? []).join(", "));
+  const [bcc, setBcc] = useState((init.bcc ?? []).join(", "));
+  // The Bcc row is hidden until asked for (or when a draft already has blind copies).
+  const [showBcc, setShowBcc] = useState((init.bcc ?? []).length > 0);
   const [subject, setSubject] = useState(init.subject ?? "");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -48,6 +53,7 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
           body.current.innerHTML = init.html; // a saved draft comes back exactly as it was
         } else {
           const sig = sigBlock(await invoke<string>("get_signature", { email: from }).catch(() => ""));
+          if (!body.current) return; // the editor was closed while the signature was being fetched
           body.current.innerHTML = init.quoteHtml
             ? `<p><br></p>${sig}<p><br></p><hr><p style="color:#888">${init.quoteHeader ?? ""}</p>` +
               `<blockquote style="margin:0 0 0 8px;padding-left:10px;border-left:3px solid #ccc">${DOMPurify.sanitize(init.quoteHtml, { FORBID_TAGS: ["style", "script"] })}</blockquote>`
@@ -73,7 +79,7 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   async function saveDraft(quiet = false) {
     try {
       const id = await invoke<string>("save_draft", {
-        draft: { id: draftId ?? null, mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to, cc, subject, html: body.current?.innerHTML ?? "", attachments: files },
+        draft: { id: draftId ?? null, mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to, cc, bcc, subject, html: body.current?.innerHTML ?? "", attachments: files },
       });
       setDraftId(id);
       changed.current = false;
@@ -98,15 +104,15 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
   }
 
   async function send() {
-    const toList = split(to), ccList = split(cc);
-    const bad = [...toList, ...ccList].filter((e) => !valid(e));
-    if (!toList.length) return setError("Add at least one recipient.");
+    const toList = split(to), ccList = split(cc), bccList = split(bcc);
+    const bad = [...toList, ...ccList, ...bccList].filter((e) => !valid(e));
+    if (!toList.length && !ccList.length && !bccList.length) return setError("Add at least one recipient.");
     if (bad.length) return setError(`Check these addresses: ${bad.join(", ")}`);
     setSending(true);
     try {
       const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${body.current?.innerHTML ?? ""}</div>`;
       const sent = await invoke<boolean>("send_mail", {
-        draft: { mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to: toList, cc: ccList, subject, html, attachments: files },
+        draft: { mode: init.mode, reply_to: init.replyTo ?? null, from: from || null, to: toList, cc: ccList, bcc: bccList, subject, html, attachments: files },
       });
       if (draftId) await invoke("delete_draft", { id: draftId }).catch(() => {});
       onSent(!sent);
@@ -141,7 +147,10 @@ export default function Compose({ init, accounts, onClose, onSent }: { init: Com
           </label>
         )}
         <label className="field"><span>To:</span><RecipientInput id="cmp-to" label="To" account={from} value={to} onChange={(v) => { touch(); setTo(v); }} /></label>
-        <label className="field"><span>Cc:</span><RecipientInput id="cmp-cc" label="Cc" account={from} value={cc} onChange={(v) => { touch(); setCc(v); }} /></label>
+        <label className="field"><span>Cc:</span><RecipientInput id="cmp-cc" label="Cc" account={from} value={cc} onChange={(v) => { touch(); setCc(v); }} />
+          {!showBcc && <button type="button" className="linkish fieldlink" onClick={(e) => { e.preventDefault(); setShowBcc(true); setTimeout(() => document.getElementById("cmp-bcc")?.focus()); }} title="Add blind copies: recipients others can't see">Bcc</button>}
+        </label>
+        {showBcc && <label className="field"><span>Bcc:</span><RecipientInput id="cmp-bcc" label="Bcc" account={from} value={bcc} onChange={(v) => { touch(); setBcc(v); }} /></label>}
         <label className="field"><span>Subject:</span><input value={subject} onChange={(e) => { touch(); setSubject(e.target.value); }} /></label>
         <div className="fmt">
           <button className="icon" onClick={() => cmd("bold")}><b>B</b></button>

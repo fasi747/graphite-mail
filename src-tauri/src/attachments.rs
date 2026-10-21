@@ -371,25 +371,29 @@ mod tests {
         }
 
         // Outlook, new message: draft -> small file -> big file by upload session in 2 pieces -> send
-        send(Draft { mode: "new".into(), reply_to: None, to: vec!["a@b.c".into()], cc: vec![], subject: "Files".into(), html: "<p>hi</p>".into(), from: Some("me@x.com".into()), attachments: paths.clone() }).unwrap();
+        send(Draft { mode: "new".into(), reply_to: None, to: vec!["a@b.c".into()], cc: vec![], bcc: vec!["hidden@b.c".into()], subject: "Files".into(), html: "<p>hi</p>".into(), from: Some("me@x.com".into()), attachments: paths.clone() }).unwrap();
         assert_eq!(replay().await.unwrap(), 1);
         let seq: Vec<String> = log.lock().unwrap().iter().map(|(m, p, _)| format!("{m} {}", p.split('?').next().unwrap())).collect();
         assert_eq!(seq, vec!["POST /me/messages", "POST /me/messages/D1/attachments", "POST /me/messages/D1/attachments/createUploadSession", "PUT /upload/1", "PUT /upload/1", "POST /me/messages/D1/send"]);
         let first = log.lock().unwrap()[0].2.clone();
         assert_eq!(first["subject"], "Files");
+        // The draft-with-files path keeps blind copies out of To/Cc too.
+        assert_eq!(first["bccRecipients"][0]["emailAddress"]["address"], "hidden@b.c");
+        assert_eq!((first["toRecipients"].as_array().unwrap().len(), first["ccRecipients"].as_array().unwrap().len()), (1, 0));
+        assert!(!first["toRecipients"].to_string().contains("hidden"));
         assert_eq!(log.lock().unwrap()[1].2["name"], "small.txt");
         assert_eq!(pending_count().unwrap(), 0);
 
         // Outlook reply: a reply draft is made, filled in, then sent with the file
         log.lock().unwrap().clear();
-        send(Draft { mode: "reply".into(), reply_to: Some("m1".into()), to: vec!["a@b.c".into()], cc: vec![], subject: "Re".into(), html: "<p>r</p>".into(), from: None, attachments: vec![small.to_string_lossy().to_string()] }).unwrap();
+        send(Draft { mode: "reply".into(), reply_to: Some("m1".into()), to: vec!["a@b.c".into()], cc: vec![], bcc: vec![], subject: "Re".into(), html: "<p>r</p>".into(), from: None, attachments: vec![small.to_string_lossy().to_string()] }).unwrap();
         replay().await.unwrap();
         let seq: Vec<String> = log.lock().unwrap().iter().map(|(m, p, _)| format!("{m} {}", p.split('?').next().unwrap())).collect();
         assert_eq!(seq, vec!["POST /me/messages/r1/createReply", "PATCH /me/messages/D2", "POST /me/messages/D2/attachments", "POST /me/messages/D2/send"]);
 
         // Gmail: the file is inside the message; a forward also carries the original's file
         log.lock().unwrap().clear();
-        send(Draft { mode: "forward".into(), reply_to: Some("g1".into()), to: vec!["z@z.com".into()], cc: vec![], subject: "Fw: Original".into(), html: "<p>fyi</p>".into(), from: None, attachments: vec![small.to_string_lossy().to_string()] }).unwrap();
+        send(Draft { mode: "forward".into(), reply_to: Some("g1".into()), to: vec!["z@z.com".into()], cc: vec![], bcc: vec![], subject: "Fw: Original".into(), html: "<p>fyi</p>".into(), from: None, attachments: vec![small.to_string_lossy().to_string()] }).unwrap();
         replay().await.unwrap();
         let sent = log.lock().unwrap().iter().find(|(_, p, _)| p.ends_with("/messages/send")).cloned().unwrap();
         let raw = crate::google::tests::unb64_for_test(sent.2["raw"].as_str().unwrap());
