@@ -23,6 +23,12 @@ chmod +x graphite-mail_<version>_amd64.AppImage
 
 **To remove it:** `sudo apt remove graphite-mail`. Your mail folder is not deleted (see "Where your data lives").
 
+**Windows 10 / 11 (installer)**
+
+Run `Graphite Mail_<version>_x64-setup.exe`. It installs for your user only (no administrator password), adds a Start-menu
+entry, and fetches the WebView2 runtime from Microsoft if the computer doesn't have it. SmartScreen may warn because the
+installer isn't signed: *More info → Run anyway*. Remove it from *Settings → Apps*; your mail folder is kept.
+
 ## First start
 
 1. **Choose a data folder.** This is where your mail and calendar are stored. The suggested folder is fine; you can move it later in Settings.
@@ -72,6 +78,12 @@ Differences from a Google sign-in account:
 - Deleting from **Trash** erases a message for good. Forwarding includes the original attachments.
 - The first sync downloads the last 90 days of each folder (up to 3000 messages); bigger messages (over 5 MB) are downloaded when you open them.
 
+## Bcc
+
+In the editor, press **Bcc** (at the end of the Cc row) to add blind copies. Bcc recipients get the message but are not
+named in it: Microsoft 365 and Gmail deliver to them separately, and over IMAP/SMTP Graphite Mail hands them to the mail
+server as envelope recipients only, without a Bcc header. Drafts keep their Bcc; replies and forwards start without one.
+
 ## Signatures and drafts
 
 - **Signature:** gear → **Signature**. Write one per account and click **Save signature**. It is added to every new message, reply and forward. If you change the **From** account, the signature changes with it.
@@ -104,7 +116,7 @@ Good to know:
 - Gmail filters have no off switch: a rule you switch off is removed from Gmail and put back when you switch it on.
 - Rules you made in Outlook on the web or in Gmail settings don't show up in this list yet.
 
-## Contacts (Microsoft 365)
+## Contacts
 
 **View → Contacts** (or **Contacts** at the top of the sidebar) shows two groups, each with a count:
 **Directory** (everyone in your organisation's address list) and **My contacts** (your own Outlook contacts, all folders).
@@ -114,15 +126,20 @@ Click a group's name to fold it.
   accounts, the menu under the search box shows one account at a time.
 - Click a person to see their addresses, phone numbers, job title, department, office and company,
   then **New email** or **Copy email**.
-- **Writing:** in To and Cc, type two letters and pick a suggestion with the arrow keys and Enter (or click it).
-  Suggestions come from the contacts of the account you send from (Microsoft 365 accounts).
+- **Writing:** in To, Cc and Bcc, type two letters and pick a suggestion with the arrow keys and Enter (or click it).
+  Suggestions come from the contacts of the account you send from.
 - The first time, click **Grant access**: one sign-in in your browser for the Contacts permissions. If your organisation
   doesn't allow it, the view says so; an administrator can approve Graphite Mail, then use Grant access again.
 - Contacts are kept on this computer for offline use and updated in the background (your contacts every 30 minutes,
   the directory once a day). **Refresh contacts** (the ↻ button) updates them now.
 - **Settings → Remove cached contacts** deletes an account's downloaded contacts from this computer (nothing changes
   at Microsoft); Refresh contacts brings them back. Removing the account deletes them too.
-- Gmail accounts have no Contacts group.
+- **Gmail with an app password** has its own groups, kept on this computer: **People you've emailed** (everyone in the
+  From/To/Cc of your synced mail, except no-reply and other automated senders, with how many messages you exchanged and
+  when the last one came; updated after every sync) and **Imported**: **Import contacts…** reads a vCard (.vcf) file or
+  a Google Contacts CSV export (several addresses and phone numbers per person; duplicates are merged by address).
+  Google's own contacts need Google sign-in and come in a later update. Both groups work with the right-click menu,
+  favourites, vCard export and To/Cc/Bcc suggestions. Gmail accounts added through Google sign-in have no Contacts group yet.
 
 **Right-click a contact** (or press Shift+F10 / the menu key) for: **New email**, **New meeting** (an event with them
 invited, in that account's calendar), **Search mail with this person** (mail from or to their addresses, searched on this

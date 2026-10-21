@@ -2,31 +2,76 @@
 
 # Graphite Mail
 
-A free, open-source, **offline-first Microsoft 365 and Gmail mail & calendar client for Linux**.
-Built with Tauri (Rust) + React. Uses Microsoft Graph, the Gmail / Google Calendar APIs, and (for Gmail with an app password) IMAP + SMTP.
+A free, open-source, **offline-first mail, calendar and contacts client for Microsoft 365 and Gmail**, for **Linux and Windows**.
+Built with Tauri (Rust) + React. Talks to Microsoft Graph, the Gmail / Google Calendar APIs, and (for Gmail with an app
+password) IMAP + SMTP. No server of its own, no telemetry: your mail goes from the provider to a folder you choose.
 
-- Microsoft 365 **and Gmail**, several accounts at once, with an **All Inboxes** view
-- Gmail either through Google sign-in or with a **Google app password** (IMAP/SMTP, no Google sign-in client needed)
-- **Contacts** for Microsoft 365: your organisation's directory and your own contacts, searchable offline, and suggested in To/Cc;
-  right-click for email, meetings, mail search, favourites, vCard export, block / rule; multi-select
-- Full offline reading and search of your mailbox
-- Read, flag, move, delete, reply and send while offline — changes sync when you reconnect
-- You choose where your mail data is stored, and can move it safely later (crash-proof, verified copy)
-- macOS-style interface with light and dark mode
-- Sign-in tokens and app passwords kept in your system keyring
+![Mail, white theme](docs/screenshots/mail-white.png)
 
-![Light](docs/screenshot-light.png)
-![Dark](docs/screenshot-dark.png)
-![Calendar](docs/screenshot-calendar.png)
+## Features
+
+- **Microsoft 365 and Gmail**, several accounts at once, with an **All Inboxes** view and a colour dot per account.
+- Gmail through **Google sign-in** (needs a build with a Google client, see below) or with a **Google app password**
+  (IMAP/SMTP, works in every build).
+- **Offline first**: your mailbox is stored on this computer; read and search it without a connection. Read, flag, move,
+  delete, reply and send while offline: changes queue up and are replayed when you reconnect, in order, with retries.
+- **Compose** with To, Cc and **Bcc** (blind copies never reach other recipients' headers on any account type), signatures
+  per account, attachments up to 15 MB, drafts saved automatically, replies and forwards that thread correctly.
+- **Calendar** for Microsoft 365 and Google accounts: events, invitations (accept / tentative / decline), new events and
+  Teams / Meet meetings.
+- **Contacts**: for Microsoft 365, your organisation's **Directory** and **My contacts**; for Gmail (app password),
+  **People you've emailed** (built from your mail, with message counts) and **Imported** (vCard or Google Contacts CSV).
+  Favourites, search, vCard export, To/Cc/Bcc suggestions, and a right-click menu (new email, new meeting, search mail
+  with this person, copy, block, create rule).
+- **Rules**: Outlook inbox rules and Gmail filters, edited from the app; local rules for app-password accounts.
+- **You choose where your mail lives**, and can move it later: a crash-safe, verified copy with one atomic switch.
+- Six **themes** (White, Light Grey, Medium Grey, Dark Grey, Black, Colourful) or follow the system.
+- Keyboard-friendly: shortcuts for the common actions, full keyboard access to the right-click menus (which never start
+  on a destructive item), Shift+F10 / the menu key.
+- Secrets (sign-in tokens, app passwords) live only in your **system keyring**: Secret Service (GNOME Keyring / KWallet)
+  on Linux, **Credential Manager** on Windows.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/contacts-white.png" alt="Contacts, white theme"></td>
+    <td><img src="docs/screenshots/contacts-gmail-white.png" alt="Gmail contacts: people you've emailed and imported"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/mail-context-menu-darkgrey.png" alt="Mail right-click menu, dark grey theme"></td>
+    <td><img src="docs/screenshots/contacts-context-menu-white.png" alt="Contacts right-click menu"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/compose-bcc.png" alt="Compose with Bcc"></td>
+    <td><img src="docs/screenshots/settings-white.png" alt="Settings"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/mail-black.png" alt="Mail, black theme"></td>
+    <td><img src="docs/screenshots/mail-colourful.png" alt="Mail, colourful theme"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/calendar-darkgrey.png" alt="Calendar, dark grey theme"></td>
+    <td><img src="docs/screenshots/mail-lightgrey.png" alt="Mail, light grey theme"></td>
+  </tr>
+</table>
+
+More: [`docs/screenshots/`](docs/screenshots/) (contacts in dark grey and colourful, settings in black, the dark context
+menus). New to Graphite Mail? Read the **[User Guide](docs/USER-GUIDE.md)**.
 
 ## Install
 
-**Ubuntu / Debian** — download the `.deb` from the releases, then:
+Releases are on the GitHub **Releases** page. Each one has a Linux `.deb`, a Linux `.AppImage` and a Windows installer.
+
+### Linux
+
+**Ubuntu / Debian** — download the `.deb`, then:
 
 ```
 sudo apt install ./graphite-mail_<version>_amd64.deb
 graphite-mail
 ```
+
+The package recommends `gnome-keyring` or `kwalletmanager`: one of them must be running, because that is where sign-in
+tokens are kept. On a minimal desktop install one first.
 
 **Any Linux** — download the `.AppImage`, then:
 
@@ -35,38 +80,114 @@ chmod +x graphite-mail_<version>_amd64.AppImage
 ./graphite-mail_<version>_amd64.AppImage
 ```
 
-New to Graphite Mail? Read the **[User Guide](docs/USER-GUIDE.md)**.
+Remove it with `sudo apt remove graphite-mail` (or delete the AppImage). Your mail folder is kept; delete it yourself if
+you want it gone (Settings shows where it is).
+
+### Windows (10 / 11, 64-bit)
+
+1. Download `Graphite Mail_<version>_x64-setup.exe` and run it. It installs for the **current user only** (no
+   administrator rights needed) under `%LOCALAPPDATA%\Programs\Graphite Mail`, with a Start-menu entry and an uninstaller.
+2. If the computer has no **WebView2** runtime (every Windows 11 and most Windows 10 machines already have it), the
+   installer downloads it from Microsoft first.
+3. The installer isn't code-signed yet, so **SmartScreen** may show "Windows protected your PC". Click *More info* →
+   *Run anyway*. You can check the file's hash against the one on the release page first.
+
+Data: settings pointer in `%APPDATA%\graphite-mail`, mail in `%LOCALAPPDATA%\graphite-mail` unless you choose another
+folder on the first start. Secrets go to the Windows Credential Manager (Control Panel → Credential Manager → Windows
+Credentials, entries named `graphite-mail`). Uninstall from *Settings → Apps*; the mail folder is kept.
+
+## Signing in
+
+- **Microsoft 365**: *Sign in with Microsoft* opens your browser; sign in there and come back. Graphite Mail listens on
+  a random port of `localhost` for the redirect, so nothing needs to be configured. *Cancel sign-in* stops it, and it
+  gives up by itself after two minutes.
+- **Gmail with Google sign-in**: the same, with *Sign in with Google* — only in builds made with a Google OAuth client
+  (see *Build from source*). The public builds say "Google sign-in coming soon".
+- **Gmail with an app password**: works everywhere; see the next section.
+
+## How to create a Gmail app password
+
+An app password is a 16-letter code that lets one application read and send your Gmail over IMAP/SMTP without your real
+password and without Google sign-in. Google only offers them on accounts with 2-Step Verification.
+
+1. Open **myaccount.google.com → Security** and turn on **2-Step Verification** if it is off.
+2. Open **myaccount.google.com/apppasswords** (or search "app passwords" on the Security page). You may be asked to sign
+   in again.
+3. Type a name, for example `Graphite Mail`, and click **Create**. Google shows a code like `abcd efgh ijkl mnop`.
+   Copy it now: Google won't show it again.
+4. In Graphite Mail: on the first screen choose **Use Gmail with an app password instead**, or later gear →
+   **Add Gmail (app password)**. Enter your Gmail address, paste the code (spaces don't matter) and click **Connect**.
+   Graphite Mail checks the code against Gmail's servers before it saves anything.
+5. To revoke it later, delete it on the same Google page (and remove the account in Graphite Mail's Settings).
+
+Notes: IMAP must be enabled for the account (Gmail → Settings → *See all settings* → *Forwarding and POP/IMAP*; on new
+accounts it is). Google Workspace administrators can switch app passwords off for their domain. The code is kept only
+in your system keyring, never in a file or the database.
+
+## Permissions
+
+Graphite Mail only ever asks for what a feature needs, when you first use the feature.
+
+| Account type | When | What is asked for | Used for |
+|---|---|---|---|
+| Microsoft 365 | Sign-in | `openid profile offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite` | your name and address, mail (read, flag, move, delete, drafts), sending, calendar |
+| Microsoft 365 | Home → Rules → **Allow rules** | `MailboxSettings.ReadWrite` | Outlook inbox rules, Block sender |
+| Microsoft 365 | Contacts → **Grant access** | `Contacts.Read People.Read User.ReadBasic.All` | your contacts, the people you work with, the directory (basic profiles) |
+| Gmail (Google sign-in) | Sign-in | `openid email profile gmail.modify calendar` | mail, labels, sending, Google Calendar |
+| Gmail (Google sign-in) | Home → Rules → **Allow rules** | `gmail.settings.basic` | Gmail filters |
+| Gmail (app password) | Adding the account | the app password you created (IMAP + SMTP, TLS) | mail only: no calendar, no Google contacts, local rules |
+
+On this computer, the app needs nothing special: it reads and writes its own data folder, keeps secrets in the keyring,
+opens links in your browser, shows notifications, and opens a file dialog when you attach, save or import. The release
+builds are made by a public GitHub Actions workflow and never contain a Google client secret.
+
+Contacts, favourites and the "people you've emailed" list are stored in the local database only, never logged, and are
+deleted by **Remove cached contacts** (Settings) or by removing the account.
+
+## Known limits
+
+- **Google sign-in** is not in the public builds (they say "Google sign-in coming soon"). Use an app password, or build
+  with your own Google OAuth client.
+- **Gmail with an app password** has no calendar and no Google Contacts (the Contacts view says so and offers *People
+  you've emailed* and *Import contacts…* instead); its rules run only while Graphite Mail is open; the first sync takes
+  the last 90 days of each folder (up to 3000 messages per folder), bigger messages come when opened.
+- **Attachments**: 15 MB in total per message. Files that could run code (`.exe`, `.sh`, `.js`, …) can be saved but not
+  opened straight from a message.
+- **Bcc** copies are, as everywhere, not recorded on the received copies; the sent copy in Microsoft 365 keeps them,
+  Gmail's Sent Mail may not show them for app-password accounts.
+- **Notifications on Windows** need the installed app (the Start-menu shortcut registers it); running the bare `.exe`
+  from a build folder shows none.
+- Shared mailboxes, delegated calendars, S/MIME and PGP are not supported.
+- The Windows build is new (v1.11): see the release notes for what has been checked on a real machine.
 
 ## Build from source
 
-Needs Node 20+, Rust, and on Ubuntu: `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev libsecret-1-dev patchelf`.
+Needs Node 20+ and a stable Rust toolchain.
 
-Gmail sign-in needs your own Google OAuth "Desktop app" client. Put it in the untracked file `src-tauri/google_oauth.json`
-(copy `src-tauri/google_oauth.example.json`) or set `GRAPHITE_GOOGLE_CLIENT_ID` / `GRAPHITE_GOOGLE_CLIENT_SECRET` when building.
-Without it the app builds and works, but "Add Google account" says it isn't set up.
-**Gmail (app password)** never uses that client or its secret, so it works in every build.
+**Ubuntu / Debian**: `libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev libsecret-1-dev patchelf`.
+
+**Windows**: Visual Studio Build Tools (C++ workload), the Rust `x86_64-pc-windows-msvc` toolchain, **CMake** and **NASM**
+on the PATH (the TLS library builds them in), and the WebView2 runtime. Secrets go to the Credential Manager, so nothing
+else to install.
 
 ```
 npm ci
-npm run tauri build        # .deb and .AppImage in src-tauri/target/release/bundle/
-cd src-tauri && cargo test # automated tests
+npm run tauri build     # Linux: .deb and .AppImage; Windows: NSIS installer — in src-tauri/target/release/bundle/
+npm test                # frontend tests
+npx tsc --noEmit        # type check
+cd src-tauri && cargo test   # Rust tests (fake Graph, Gmail, IMAP and SMTP servers; no network)
 ```
 
-## Microsoft 365 permissions
+Gmail sign-in needs your own Google OAuth "Desktop app" client. Put it in the untracked file `src-tauri/google_oauth.json`
+(copy `src-tauri/google_oauth.example.json`) or set `GRAPHITE_GOOGLE_CLIENT_ID` / `GRAPHITE_GOOGLE_CLIENT_SECRET` when
+building. Without it the app builds and works, but *Add Google account* says it isn't set up. **Gmail (app password)**
+never uses that client or its secret, so it works in every build.
 
-Graphite Mail asks for these delegated Microsoft Graph permissions:
-
-| When | Permissions | What for |
-|---|---|---|
-| Sign-in | `openid profile offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite` | mail, sending, calendar |
-| Home → Rules → **Allow rules** | `MailboxSettings.ReadWrite` | Outlook inbox rules |
-| Contacts → **Grant access** | `Contacts.Read People.Read User.ReadBasic.All` | your contacts, the people you work with, the directory (basic profiles) |
-
-The extra permissions are asked for only when you use the feature, so mail and calendar never depend on them.
-`User.ReadBasic.All` can be granted by users in most organisations; where user consent is switched off, an administrator
-has to approve Graphite Mail (or the Contacts view says the organisation doesn't allow it). Contacts are stored only in the
-local database; "Remove cached contacts" (Settings) and removing the account delete them.
+**Releases**: pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: tests on Linux and Windows, the `.deb` and
+the Windows installer on separate runners, and a **draft** release with both attached. Publish it by hand after checking
+the files. The workflow never has the Google client secret, so those builds have no Google sign-in.
 
 ## Status
 
-Mail, calendar, contacts, offline changes and data-folder moves are working. See [CHANGELOG.md](CHANGELOG.md) and [PLAN.md](PLAN.md).
+Mail, calendar, contacts, offline changes, data-folder moves, Bcc, local contacts for app-password accounts and the
+Windows build are in. See [CHANGELOG.md](CHANGELOG.md) for each version and [PLAN.md](PLAN.md) for the history.
