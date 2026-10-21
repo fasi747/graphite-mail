@@ -70,6 +70,11 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
     setAdding(null); setError(""); setMessage(note);
     invoke("cancel_sign_in").catch(() => {});
   }
+  async function removeContacts(a: Acct) {
+    setError(""); setMessage("");
+    try { await invoke("remove_cached_contacts", { email: a.email }); setMessage(`Cached contacts of ${a.email} were removed. Contacts → Refresh contacts downloads them again.`); }
+    catch (e) { setError(String(e)); }
+  }
   async function remove(a: Acct) {
     setError(""); setMessage("");
     const yes = await ask(`Remove ${a.email}?\n\nIts downloaded mail and calendar are deleted from this computer. Nothing is deleted on the server, and you can add the account again any time.`, { title: "Remove account", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" });
@@ -119,6 +124,9 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
               <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider)}</span></div>
+              {(a.provider ?? "microsoft") === "microsoft" && (
+                <button disabled={!!moving} title="Delete this account's downloaded contacts from this computer" onClick={() => removeContacts(a)}>Remove cached contacts</button>
+              )}
               <button disabled={!!moving} onClick={() => remove(a)}>Remove</button>
             </div>
           ))}

@@ -2,6 +2,7 @@ mod attachments;
 mod drafts;
 mod auth;
 mod calendar;
+mod contacts;
 mod folders;
 mod google;
 mod http;
@@ -65,6 +66,50 @@ async fn add_google_account(app: tauri::AppHandle) -> CmdResult<Account> {
     google::sign_in(|url| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string())))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// The Contacts view: directory and personal contacts matching `query` (optionally of one account), and how each
+/// Microsoft account's contacts stand (not granted yet, blocked by the organisation, …).
+#[tauri::command]
+fn contacts_overview(query: String, account: Option<String>) -> CmdResult<contacts::Overview> {
+    contacts::overview(&query, account.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn contact_detail(id: String) -> CmdResult<contacts::Detail> {
+    contacts::detail(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn refresh_contacts(account: Option<String>) -> CmdResult<Vec<contacts::AccountStatus>> {
+    contacts::refresh(account.as_deref()).await.map_err(|e| e.to_string())
+}
+
+/// "Grant access": asks Microsoft for the Contacts permissions for one account (opens the browser), then syncs.
+#[tauri::command]
+async fn grant_contacts(app: tauri::AppHandle, email: String) -> CmdResult<Vec<contacts::AccountStatus>> {
+    let acc = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).ok_or("Unknown account")?;
+    if acc.provider != "microsoft" {
+        return Err("Contacts are available for Microsoft 365 accounts.".into());
+    }
+    let open = |url: &str| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()));
+    let got = auth::sign_in_scoped(open, acc.rules, true, Some(&email)).await.map_err(|e| e.to_string())?;
+    if !got.email.eq_ignore_ascii_case(&email) {
+        return Err(format!("You signed in as {}, but this is for {email}. Please try again with {email}.", got.email));
+    }
+    contacts::refresh(Some(&email)).await.map_err(|e| e.to_string())
+}
+
+/// Forgets one account's downloaded contacts (they stay on the server) until "Refresh contacts".
+#[tauri::command]
+fn remove_cached_contacts(email: String) -> CmdResult<()> {
+    contacts::remove_cached_for(&email).map_err(|e| e.to_string())
+}
+
+/// To/Cc suggestions while writing from `account` (Microsoft accounts only).
+#[tauri::command]
+fn suggest_recipients(query: String, account: String) -> CmdResult<Vec<contacts::Suggestion>> {
+    contacts::suggest(&query, &account, 8).map_err(|e| e.to_string())
 }
 
 /// Whether "Add Google account" can work in this build (false when it was built without the Google client secret).
@@ -506,6 +551,12 @@ pub fn run() {
             add_google_account,
             add_imap_account,
             google_sign_in_available,
+            contacts_overview,
+            contact_detail,
+            refresh_contacts,
+            grant_contacts,
+            remove_cached_contacts,
+            suggest_recipients,
             cancel_sign_in,
             get_notifications,
             set_notifications,

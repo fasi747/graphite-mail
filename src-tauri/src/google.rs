@@ -166,7 +166,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
 
     let me: Value = crate::http::client().get(USERINFO_URL).bearer_auth(&tok.access_token).send().await?.error_for_status()?.json().await?;
     let email = me["email"].as_str().ok_or_else(|| anyhow!("Google didn't tell us the account's email address."))?.to_string();
-    let acc = auth::Account { display_name: me["name"].as_str().unwrap_or(&email).to_string(), email, provider: "google".into(), rules };
+    let acc = auth::Account { display_name: me["name"].as_str().unwrap_or(&email).to_string(), email, provider: "google".into(), rules, contacts: false };
     auth::remember(&acc, &rt)?;
     auth::cache_token(&acc.email, &tok.access_token, tok.expires_in);
     Ok(acc)

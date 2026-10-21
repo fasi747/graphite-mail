@@ -268,6 +268,27 @@ CREATE TABLE IF NOT EXISTS imap_uids (
 );
 CREATE INDEX IF NOT EXISTS idx_imap_uids_message ON imap_uids(message_id);
 
+-- Microsoft 365 contacts, kept on this computer only: the organisation's directory and the user's own contacts.
+CREATE TABLE IF NOT EXISTS contacts (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,              -- 'directory' or 'personal'
+    remote_id TEXT NOT NULL,
+    folder_id TEXT,                    -- personal: the contact folder it is in
+    folder_name TEXT,
+    display_name TEXT NOT NULL,
+    emails_json TEXT NOT NULL DEFAULT '[]',
+    phones_json TEXT NOT NULL DEFAULT '[]',
+    job_title TEXT,
+    department TEXT,
+    office TEXT,
+    company TEXT,
+    search_text TEXT NOT NULL DEFAULT '',  -- lower-case name, emails, title, department for searching
+    sync_gen INTEGER NOT NULL DEFAULT 0,   -- full listings: rows not seen in the latest one are removed
+    UNIQUE(account_id, source, remote_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_list ON contacts(account_id, source, display_name);
+
 -- Per-account sync bookmarks (e.g. Gmail history id).
 CREATE TABLE IF NOT EXISTS account_state (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

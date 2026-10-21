@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-mail"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "async-imap",

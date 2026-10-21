@@ -73,3 +73,11 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Browser sign-in can be cancelled, and stops by itself after 2 minutes (also in the app's sign-in listener); the app-password button stays usable meanwhile
 - [x] Builds without the Google client secret show "Google sign-in coming soon. Use an app password for now." instead of a Google button
 - [x] Component tests (jsdom + Testing Library) for the above
+
+## v1.10 — Contacts (Microsoft 365)
+- [x] Contacts view: Directory + My contacts groups with counts, one search, account filter, details pane (New email / Copy email)
+- [x] To/Cc suggestions from the sending Microsoft account's contacts
+- [x] Graph sync: contact folders by delta (fallback: full listing), directory by paged /users (+ /me/people details), 429 Retry-After, sweep of removed entries
+- [x] Separate consent (Contacts.Read People.Read User.ReadBasic.All) with Grant access; mail/calendar unaffected if it's missing or withdrawn
+- [x] Local only, never logged; Remove cached contacts; deleted with the account
+- [ ] Tested with a real Microsoft 365 tenant

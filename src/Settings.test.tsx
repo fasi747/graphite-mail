@@ -108,4 +108,14 @@ describe("Settings → Accounts", () => {
     expect(await screen.findByRole("button", { name: "Add Google account" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(/coming soon/)).toBeNull());
   });
+
+  it("removes one Microsoft account's cached contacts", async () => {
+    backend(true);
+    render(<Settings accounts={[...accounts, { email: "me@gmail.com", display_name: "Gm", provider: "imap" }]} onClose={() => {}} onAccountsChanged={() => {}} theme="system" onTheme={() => {}} />);
+    const buttons = screen.getAllByRole("button", { name: "Remove cached contacts" });
+    expect(buttons).toHaveLength(1); // not for the Gmail (app password) account
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("remove_cached_contacts", { email: "work@corp.com" }));
+    expect(await screen.findByText(/Cached contacts of work@corp.com were removed/)).toBeTruthy();
+  });
 });

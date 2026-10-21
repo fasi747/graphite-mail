@@ -104,6 +104,26 @@ Good to know:
 - Gmail filters have no off switch: a rule you switch off is removed from Gmail and put back when you switch it on.
 - Rules you made in Outlook on the web or in Gmail settings don't show up in this list yet.
 
+## Contacts (Microsoft 365)
+
+**View → Contacts** (or **Contacts** at the top of the sidebar) shows two groups, each with a count:
+**Directory** (everyone in your organisation's address list) and **My contacts** (your own Outlook contacts, all folders).
+Click a group's name to fold it.
+
+- **Search** looks through both groups at once (name, address, job title, department). With several Microsoft 365
+  accounts, the menu under the search box shows one account at a time.
+- Click a person to see their addresses, phone numbers, job title, department, office and company,
+  then **New email** or **Copy email**.
+- **Writing:** in To and Cc, type two letters and pick a suggestion with the arrow keys and Enter (or click it).
+  Suggestions come from the contacts of the account you send from (Microsoft 365 accounts).
+- The first time, click **Grant access**: one sign-in in your browser for the Contacts permissions. If your organisation
+  doesn't allow it, the view says so; an administrator can approve Graphite Mail, then use Grant access again.
+- Contacts are kept on this computer for offline use and updated in the background (your contacts every 30 minutes,
+  the directory once a day). **Refresh contacts** (the ↻ button) updates them now.
+- **Settings → Remove cached contacts** deletes an account's downloaded contacts from this computer (nothing changes
+  at Microsoft); Refresh contacts brings them back. Removing the account deletes them too.
+- Gmail accounts have no Contacts group.
+
 ## Everyday use
 
 | To do this | Do this |

@@ -197,3 +197,22 @@ fn app_passwords_stay_out_of_logs_and_files() {
         assert!(!text.contains("app_password"), "{f} must not store app passwords");
     }
 }
+
+#[test]
+fn contacts_stay_local_and_out_of_logs() {
+    let src = std::fs::read_to_string(root().join("src/contacts.rs")).unwrap();
+    // Log lines may name the user's own account and a status, never a contact or a response body.
+    for line in src.lines().filter(|l| l.contains("eprintln!") || l.contains("println!") || l.contains("dbg!")) {
+        for banned in ["name", "mail\"", "emails", "phone", "body", "page", "value", "url", "token"] {
+            assert!(!line.contains(banned), "a log line may expose contact data: {line}");
+        }
+    }
+    // Graph errors keep only the HTTP status, not the text (which can quote contact data).
+    assert!(src.contains("struct Failed(u16)"));
+    // The only place contacts go is the local database (no other network calls than Graph reads).
+    assert!(!src.contains(".post(") && !src.contains(".put(") && !src.contains(".patch("), "contacts are only ever read from Graph");
+    // Contacts go when their account goes.
+    let schema = std::fs::read_to_string(root().join("src/storage.rs")).unwrap();
+    let table = &schema[schema.find("CREATE TABLE IF NOT EXISTS contacts").unwrap()..];
+    assert!(table[..table.find(");").unwrap()].contains("REFERENCES accounts(id) ON DELETE CASCADE"));
+}

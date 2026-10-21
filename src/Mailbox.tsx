@@ -7,6 +7,7 @@ import { DragBar } from "./WindowControls";
 import Icon from "./Icon";
 import Compose, { ComposeInit } from "./Compose";
 import CalendarView, { Cal } from "./CalendarView";
+import ContactsView from "./ContactsView";
 import Settings from "./Settings";
 import Rules from "./Rules";
 import { Ribbon, RibbonTab, Group, Big, Small, Stack, BigMenu, NamePrompt } from "./Ribbon";
@@ -166,7 +167,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const rejected = queue.filter((q) => q.failed).length;
   const refreshQueue = () => invoke<QueueItem[]>("pending_details").then(setQueue).catch(() => {});
   const [, setMoveOpen] = useState(false);
-  const [view, setView] = useState<"mail" | "calendar">("mail");
+  const [view, setView] = useState<"mail" | "calendar" | "contacts">("mail");
   const [cals, setCals] = useState<Cal[]>([]);
   const [hiddenCals, setHiddenCals] = useState<Set<string>>(() => { try { return new Set(JSON.parse(localStorage.getItem("hiddenCals") || "[]")); } catch { return new Set(); } });
   useEffect(() => { try { localStorage.setItem("hiddenCals", JSON.stringify([...hiddenCals])); } catch { /* ignore */ } }, [hiddenCals]);
@@ -497,6 +498,9 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
         <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
           <span className="ico"><Icon name="calendar" /></span><span className="name" title="All your accounts' calendars together">Master Calendar</span>
         </div>
+        <div className={`folder navitem ${view === "contacts" ? "active" : ""}`} onClick={() => setView("contacts")}>
+          <span className="ico"><Icon name="contacts" /></span><span className="name" title="Your organisation's directory and your contacts (Microsoft 365)">Contacts</span>
+        </div>
         <div className="folders">
           {view === "calendar" && cals.length > 0 && <div className="section" style={{ padding: "6px 10px 4px" }}>My calendars <span style={{ fontWeight: 400 }}>· tick to show</span></div>}
           {view === "calendar" && cals.map((c, i) => (
@@ -607,6 +611,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
           <Group label="Show">
             <Big icon="mail" label="Mail" onClick={() => setView("mail")} accent={view === "mail"} />
             <Big icon="calendar" label="Calendar" onClick={() => setView("calendar")} accent={view === "calendar"} />
+            <Big icon="contacts" label="Contacts" onClick={() => setView("contacts")} accent={view === "contacts"} />
           </Group>
           <Group label="Appearance">
             <BigMenu icon="appearance" label="Theme" items={[{ id: "system" as ThemeChoice, label: "Match system" }, ...THEMES].map((t) => ({
@@ -623,6 +628,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       </Ribbon>
 
       {view === "calendar" && <PaneBoundary><CalendarView calendars={cals} hidden={hiddenCals} onToast={flash} newRequest={meetingReq} /></PaneBoundary>}
+      {view === "contacts" && <PaneBoundary><ContactsView accounts={accounts} onToast={flash} onNewEmail={(to, from) => setCompose({ mode: "new", to: [to], from })} /></PaneBoundary>}
       {view === "mail" && <>
       <section className="list">
         <div className="toolbar" data-tauri-drag-region>

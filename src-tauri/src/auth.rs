@@ -17,8 +17,19 @@ const SCOPES: &str =
 /// Extra permission needed to create Outlook mail rules; asked for only when the user turns rules on.
 const RULES_SCOPE: &str = "MailboxSettings.ReadWrite";
 
-fn scopes(rules: bool) -> String {
-    if rules { format!("{SCOPES} {RULES_SCOPE}") } else { SCOPES.to_string() }
+/// Extra permissions for the Contacts view, asked for only when the user grants them (Contacts → Grant access):
+/// personal contacts, the people they work with, and the organisation's directory (basic profiles).
+pub const CONTACTS_SCOPES: &str = "Contacts.Read People.Read User.ReadBasic.All";
+
+fn scopes(rules: bool, contacts: bool) -> String {
+    let mut s = SCOPES.to_string();
+    if rules {
+        s = format!("{s} {RULES_SCOPE}");
+    }
+    if contacts {
+        s = format!("{s} {CONTACTS_SCOPES}");
+    }
+    s
 }
 #[cfg(not(test))]
 const KEYRING_SERVICE: &str = "graphite-mail";
@@ -33,6 +44,9 @@ pub struct Account {
     /// The account has granted the extra permission that mail rules need.
     #[serde(default)]
     pub rules: bool,
+    /// Microsoft: the account has granted the Contacts permissions (CONTACTS_SCOPES).
+    #[serde(default)]
+    pub contacts: bool,
 }
 
 fn default_provider() -> String {
@@ -121,11 +135,21 @@ pub fn remember_account(acc: &Account) -> Result<()> {
     let mut list = accounts();
     match list.iter_mut().find(|a| a.email.eq_ignore_ascii_case(&acc.email)) {
         Some(a) => {
-            let rules = a.rules || acc.rules; // a permission once granted stays granted
+            let (rules, contacts) = (a.rules || acc.rules, a.contacts || acc.contacts); // a permission once granted stays granted
             *a = acc.clone();
             a.rules = rules;
+            a.contacts = contacts;
         }
         None => list.push(acc.clone()),
+    }
+    save_accounts(&list)
+}
+
+/// Records that an account no longer has the Contacts permissions (they were withdrawn).
+pub fn drop_contacts_permission(email: &str) -> Result<()> {
+    let mut list = accounts();
+    for a in list.iter_mut().filter(|a| a.email.eq_ignore_ascii_case(email)) {
+        a.contacts = false;
     }
     save_accounts(&list)
 }
@@ -208,7 +232,12 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>) -> Result<Account> {
 
 /// Sign-in that can also ask for the mail-rules permission, and pre-select an account with `hint`.
 pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hint: Option<&str>) -> Result<Account> {
-    let scope = scopes(rules);
+    sign_in_scoped(open, rules, false, hint).await
+}
+
+/// Sign-in that can ask for the rules and/or the Contacts permissions (kept once granted).
+pub async fn sign_in_scoped(open: impl FnOnce(&str) -> Result<()>, rules: bool, contacts: bool, hint: Option<&str>) -> Result<Account> {
+    let scope = scopes(rules, contacts);
     let verifier = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -250,6 +279,7 @@ pub async fn sign_in_with(open: impl FnOnce(&str) -> Result<()>, rules: bool, hi
 
     let mut account = fetch_me(&tok.access_token).await?;
     account.rules = rules;
+    account.contacts = contacts;
     remember(&account, tok.refresh_token.as_deref().ok_or(anyhow!("No refresh token"))?)?;
     cache_put(&account.email, &tok.access_token, tok.expires_in);
     Ok(account)
@@ -357,6 +387,7 @@ async fn fetch_me(token: &str) -> Result<Account> {
         display_name: me.display_name.unwrap_or(me.user_principal_name),
         provider: "microsoft".into(),
         rules: false,
+        contacts: false,
     })
 }
 
@@ -378,15 +409,22 @@ pub async fn access_token() -> Result<String> {
         _ => {}
     }
     let rt = refresh_token_for(&email)?;
-    let scope = scopes(acc.as_ref().is_some_and(|a| a.rules));
-    let tok = token_request(&[
-        ("client_id", CLIENT_ID),
-        ("grant_type", "refresh_token"),
-        ("refresh_token", &rt),
-        ("scope", &scope),
-    ])
-    .await
-    .map_err(|e| anyhow!("{email}: {e}"))?;
+    let (rules, contacts) = acc.as_ref().map_or((false, false), |a| (a.rules, a.contacts));
+    let refresh = |scope: String| {
+        let rt = rt.clone();
+        async move { token_request(&[("client_id", CLIENT_ID), ("grant_type", "refresh_token"), ("refresh_token", &rt), ("scope", &scope)]).await }
+    };
+    let tok = match refresh(scopes(rules, contacts)).await {
+        Ok(t) => t,
+        // The Contacts permissions were withdrawn (by the user or an administrator): mail and calendar must keep
+        // working, so sign in without them and let the Contacts view ask again.
+        Err(_) if contacts => {
+            let t = refresh(scopes(rules, false)).await.map_err(|e| anyhow!("{email}: {e}"))?;
+            let _ = drop_contacts_permission(&email);
+            t
+        }
+        Err(e) => return Err(anyhow!("{email}: {e}")),
+    };
     if let Some(new_rt) = tok.refresh_token {
         store_refresh_token(&email, &new_rt)?;
     }

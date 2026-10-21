@@ -35,6 +35,8 @@ const P: Record<string, string> = {
   unread: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
   copy: "M8 8h12v12H8zM16 8V4H4v12h4",
   block: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8",
+  contacts: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20a7.5 7.5 0 0 1 15 0",
+  phone: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z",
 };
 
 export default function Icon({ name, size = 16 }: { name: string; size?: number }) {

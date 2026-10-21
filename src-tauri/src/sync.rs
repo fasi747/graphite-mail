@@ -158,6 +158,8 @@ async fn sync_microsoft(account_id: &str) -> Result<SyncReport> {
             rep.calendar_error = Some(e.to_string());
         }
     }
+    // Contacts come last and never hold up mail or calendar: how they went is shown in the Contacts view.
+    let _ = crate::contacts::sync_account(account_id, false).await;
     Ok(rep)
 }
 
