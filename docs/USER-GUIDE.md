@@ -35,6 +35,7 @@ chmod +x graphite-mail_<version>_amd64.AppImage
 You can use more than one account at the same time.
 
 - **Add an account:** gear → **Add Microsoft account** or **Add Google account**. Your browser opens; sign in and come back.
+  Or **Add Gmail (app password)** to use Gmail without the browser sign-in (see below).
 - **The sidebar** has one section per account (name and email on top, its folders below; click the header to fold it).
   With two or more accounts, **All Inboxes** at the top shows every account's Inbox together. A small coloured dot tells you which account a message belongs to.
 - **Writing:** the **From** line lets you choose the account. Replies and forwards always go out from the account that received the message.
@@ -49,6 +50,26 @@ You can use more than one account at the same time.
 - **Star** is the Flag button. Delete sends mail to Trash; Gmail empties its Trash by itself after 30 days (Graphite Mail does not erase mail for good).
 - Forwarding does not include the original attachments (Gmail doesn't do that for apps).
 - Google Calendar works like the Microsoft calendar; **Google Meet video call** adds a Meet link to a new event.
+
+### Gmail with an app password
+
+If **Sign in with Google** isn't available to you, you can connect any @gmail.com account with a Google **app password** instead.
+Graphite Mail then reads mail over IMAP and sends over SMTP, directly with Gmail.
+
+1. Turn on **2-Step Verification** for your Google account (myaccount.google.com → Security). App passwords only exist with it.
+2. Open **myaccount.google.com/apppasswords**, type a name (for example "Graphite Mail") and click **Create**. Google shows a 16-letter code.
+3. In Graphite Mail: gear → **Add Gmail (app password)** (or, on the first screen, **Use Gmail with an app password instead**).
+   Enter your Gmail address, paste the code (the spaces don't matter) and click **Connect**.
+
+Graphite Mail checks the code with Gmail's mail servers before it saves anything. The app password is kept in your system keyring only.
+To stop Graphite Mail using it, remove the account in Settings, or revoke the app password on the same Google page.
+
+Differences from a Google sign-in account:
+- **No calendar**: app passwords only give access to mail.
+- Your labels, Starred, Important and **All Mail** show as folders. A message with several labels is stored once and appears under each of them.
+- **Rules** (and **Block sender**) are kept on this computer and run on new Inbox mail each time Graphite Mail checks for mail, so only while the app is open.
+- Deleting from **Trash** erases a message for good. Forwarding includes the original attachments.
+- The first sync downloads the last 90 days of each folder (up to 3000 messages); bigger messages (over 5 MB) are downloaded when you open them.
 
 ## Signatures and drafts
 
@@ -73,6 +94,7 @@ You can use more than one account at the same time.
 4. **Save rule.**
 
 The first time, Graphite Mail asks you to **Allow rules** for that account: one more sign-in in your browser to give the extra permission.
+(Gmail with an app password needs no extra permission: its rules are kept on this computer and run while Graphite Mail is open.)
 
 Rules are stored at Microsoft (Outlook inbox rules) or Google (Gmail filters), so they keep working **even when Graphite Mail is closed**. They apply to mail that arrives from then on. To use a rule on mail you already have, click **Run on existing mail…** and choose the folder.
 
@@ -145,6 +167,11 @@ To keep a backup, copy the data folder while Graphite Mail is closed.
 
 **"Your Microsoft sign-in has expired."** Click the sign-out button (bottom-left), then sign in again.
 
+**"Google didn't accept the app password."** Check the address, and paste the code again; if you revoked it, create a new one at
+myaccount.google.com/apppasswords, then remove the account in Settings and add it again.
+**"Google wants an app password … not your normal password."** Your normal Google password doesn't work here: create an app password
+(it needs 2-Step Verification). **"Couldn't reach imap.gmail.com."** You're offline, or a firewall blocks mail ports 993 and 465.
+
 **Sign-in asks me to unlock a keyring.** Graphite Mail stores your sign-in in the system keyring. Enter your login password when asked.
 If you have no keyring installed: `sudo apt install gnome-keyring`.
 
@@ -157,5 +184,6 @@ If you have no keyring installed: `sudo apt install gnome-keyring`.
 
 ## Privacy
 
-Graphite Mail talks only to Microsoft (sign-in and Microsoft Graph). There is no tracking and no other server.
+Graphite Mail talks only to the services of your accounts: Microsoft (sign-in and Microsoft Graph) and Google (sign-in, the Gmail and Calendar APIs,
+or for app-password accounts Gmail's mail servers imap.gmail.com and smtp.gmail.com). There is no tracking and no other server.
 Emails cannot run scripts, and remote pictures are blocked until you allow them.

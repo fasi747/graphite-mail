@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { THEMES, ThemeChoice } from "./theme";
+import AppPasswordForm from "./AppPasswordForm";
+import { Acct, providerLabel } from "./accounts";
 
 /** Small preview colours for each theme: sidebar, content, accent. */
 const SWATCH: Record<string, [string, string, string]> = {
@@ -11,7 +13,6 @@ const SWATCH: Record<string, [string, string, string]> = {
 };
 
 type Info = { path: string; size_bytes: number };
-type Acct = { email: string; display_name: string; provider?: string };
 const PALETTE = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff"];
 type Progress = { phase: number; label: string; done: number; total: number };
 
@@ -21,6 +22,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
   accounts: Acct[]; onClose: () => void; onAccountsChanged: () => void; theme: ThemeChoice; onTheme: (t: ThemeChoice) => void;
 }) {
   const [adding, setAdding] = useState<"microsoft" | "google" | null>(null);
+  const [appPassword, setAppPassword] = useState(false);
   const [info, setInfo] = useState<Info | null>(null);
   const [moving, setMoving] = useState<Progress | null>(null);
   const [message, setMessage] = useState("");
@@ -97,15 +99,23 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
           {accounts.map((a, i) => (
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
-              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {a.provider === "google" ? "Gmail" : "Microsoft 365"}</span></div>
+              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider)}</span></div>
               <button disabled={!!moving} onClick={() => remove(a)}>Remove</button>
             </div>
           ))}
           <div className="rowbtns">
             <button disabled={!!adding || !!moving} onClick={() => add("microsoft")}>{adding === "microsoft" ? "Waiting for browser…" : "Add Microsoft account"}</button>
             <button disabled={!!adding || !!moving} onClick={() => add("google")}>{adding === "google" ? "Waiting for browser…" : "Add Google account"}</button>
+            <button disabled={!!adding || !!moving || appPassword} onClick={() => { setError(""); setMessage(""); setAppPassword(true); }}>Add Gmail (app password)</button>
           </div>
           {adding && <div className="muted" style={{ fontSize: 12 }}>Finish signing in in your web browser, then come back here.</div>}
+          {appPassword && (
+            <div className="rulecard">
+              <AppPasswordForm
+                onAdded={(a) => { setAppPassword(false); setMessage(`${a.email} is connected. Downloading its mail…`); onAccountsChanged(); }}
+                onCancel={() => setAppPassword(false)} />
+            </div>
+          )}
           <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginTop: 6 }}>SIGNATURES</div>
           <div className="muted" style={{ fontSize: 12 }}>Each account has its own signature. It is added to new messages, replies and forwards sent from that account.</div>
           {accounts.map((a) => (

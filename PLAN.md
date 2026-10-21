@@ -49,3 +49,19 @@ Scope v1: Mail + Calendar, Microsoft Graph only. SQLCipher deferred. Windows opt
 - [x] Strict Content-Security-Policy (production) + dev policy; links leave the email frame as refused new-window requests
 - [x] Links: only http, https and mailto are acted on (`links.rs`, unit-tested for every dangerous scheme)
 - [x] Capabilities trimmed to what the UI uses (no `opener:default`, no `notification:default`, no `core:default`); test keeps them exact
+
+## v1.8 — multi-select, themes, right-click menu
+- [x] Multi-select (Ctrl/Shift-click, checkboxes, Ctrl+A) for delete, move, read/unread, flag — through the offline queue
+- [x] Themes: White, Light/Medium/Dark Grey, Black, Colourful
+- [x] Right-click menu: reply, forward, delete, move/copy, read/unread, flag, create rule, block sender, mark as spam
+
+## v1.9 — Gmail with an app password (IMAP/SMTP)
+- [x] "Gmail (app password)" account type: no OAuth client or client secret involved, works in every build
+- [x] Setup checks IMAP and SMTP before saving; clear errors for a wrong password, a normal password instead of an app password, IMAP off, offline
+- [x] App password only in the OS keyring (redacted from errors, never logged); tests guard both
+- [x] IMAP (imap.gmail.com:993, TLS): folders by special-use attributes, labels as folders (one message per X-GM-MSGID), UIDVALIDITY/UID incremental sync with full resync on a UIDVALIDITY change, CONDSTORE quick check, headers first then bodies in the background or on open, attachments
+- [x] Every action through the offline queue (read/unread, flag, move, copy, delete to Trash, delete for good, spam, block sender) — so multi-select works unchanged
+- [x] SMTP sending (smtp.gmail.com:465) with replies threaded and forwards keeping attachments
+- [x] Folder create/rename/delete over IMAP; rules for this account type run locally on new Inbox mail
+- [x] End-to-end test against a pretend Gmail IMAP + SMTP server
+- [ ] Tested with a real @gmail.com account and app password

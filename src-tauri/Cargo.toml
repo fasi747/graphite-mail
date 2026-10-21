@@ -1,7 +1,7 @@
 [package]
 name = "graphite-mail"
-version = "1.8.0"
-description = "Offline-first Microsoft 365 mail & calendar client for Linux"
+version = "1.9.0"
+description = "Offline-first Microsoft 365 and Gmail mail & calendar client for Linux"
 authors = ["Faisal Gillani"]
 edition = "2024"
 
@@ -42,6 +42,10 @@ mail-builder = "1.0.0"
 futures = "0.3.34"
 mime_guess = "2.0.5"
 percent-encoding = "2.3.2"
+async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws_lc_rs", "tls12"] }
+webpki-roots = "1.0.10"
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "aws-lc-rs", "webpki-roots", "builder"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

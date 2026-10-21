@@ -363,7 +363,7 @@ pub struct Parsed {
     pub file_bytes: Vec<Vec<u8>>,
 }
 
-fn people(a: Option<&mail_parser::Address>) -> String {
+pub(crate) fn people(a: Option<&mail_parser::Address>) -> String {
     let list: Vec<Value> = a
         .map(|a| a.iter().map(|x| json!({ "name": x.name(), "address": x.address() })).collect())
         .unwrap_or_default();
@@ -728,7 +728,9 @@ pub fn build_raw(from: (&str, &str), to: &[String], cc: &[String], subject: &str
     fn addrs(l: &[String]) -> Address<'_> {
         Address::from(l.iter().map(|a| Address::new_address(None::<&str>, a.as_str())).collect::<Vec<_>>())
     }
-    let mut b = MessageBuilder::new().from(from).to(addrs(to)).subject(subject).html_body(html).text_body(sync::strip_html(html));
+    // No display name: just the address (not an empty "" name).
+    let sender = if from.0.trim().is_empty() { Address::new_address(None::<&str>, from.1) } else { Address::from(from) };
+    let mut b = MessageBuilder::new().from(sender).to(addrs(to)).subject(subject).html_body(html).text_body(sync::strip_html(html));
     if !cc.is_empty() {
         b = b.cc(addrs(cc));
     }

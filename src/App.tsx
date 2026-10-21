@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import Mailbox from "./Mailbox";
+import AppPasswordForm from "./AppPasswordForm";
 import { DragBar, TrafficLights } from "./WindowControls";
 import { applyTheme, cachedChoice } from "./theme";
 import "./App.css";
@@ -62,6 +63,7 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [appPassword, setAppPassword] = useState(false);
 
   const loadSetup = () => invoke<SetupState>("setup_state").then(setSetup).catch((e) => setError(String(e)));
 
@@ -107,6 +109,12 @@ export default function App() {
   if (!setup) return <Onboard><p className="muted">{error || "Loading…"}</p></Onboard>;
   if (!setup.ready) return <SetupWizard defaultDir={setup.default_dir} onDone={loadSetup} />;
   if (account) return <Mailbox account={account} onSignOut={signOut} />;
+  if (appPassword) return (
+    <Onboard>
+      <h1>Graphite Mail</h1>
+      <AppPasswordForm onAdded={setAccount} onCancel={() => setAppPassword(false)} />
+    </Onboard>
+  );
 
   return (
     <Onboard>
@@ -118,6 +126,7 @@ export default function App() {
         </button>
         <button onClick={signInGoogle} disabled={busy}>Sign in with Google</button>
       </div>
+      <button className="linkish" onClick={() => { setError(""); setAppPassword(true); }} disabled={busy}>Use Gmail with an app password instead</button>
       {busy && <p className="muted">Finish signing in in your web browser, then come back here.</p>}
       {error && <p className="error">{error}</p>}
     </Onboard>

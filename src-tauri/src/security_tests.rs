@@ -170,3 +170,30 @@ fn the_email_frame_can_only_ask_for_popups_which_the_app_turns_into_checked_link
     assert!(lib.contains(".on_navigation("));
 }
 
+
+#[test]
+fn the_app_password_account_type_needs_no_google_client() {
+    // IMAP/SMTP accounts must build and run without GRAPHITE_GOOGLE_CLIENT_SECRET: no OAuth code in that path.
+    let src = std::fs::read_to_string(root().join("src/imap.rs")).unwrap();
+    for banned in ["CLIENT_SECRET", "CLIENT_ID", "client()", "access_token", "sign_in", "oauth2", "GRAPHITE_GOOGLE"] {
+        assert!(!src.contains(banned), "imap.rs must not use {banned}");
+    }
+}
+
+#[test]
+fn app_passwords_stay_out_of_logs_and_files() {
+    let src = std::fs::read_to_string(root().join("src/imap.rs")).unwrap();
+    // Every log line in the IMAP code prints only an error that was already redacted or carries no password.
+    for line in src.lines().filter(|l| l.contains("eprintln!") || l.contains("println!") || l.contains("dbg!")) {
+        assert!(!line.contains("pw") && !line.contains("password") && !line.contains("expose"), "suspicious log line: {line}");
+    }
+    // The password is read from the keyring at the moment it is needed, and only handed to the two servers.
+    let uses: Vec<&str> = src.lines().filter(|l| l.contains(".expose()")).map(str::trim).collect();
+    assert!(uses.len() <= 6, "the app password is used in more places than expected: {uses:#?}");
+    let auth = std::fs::read_to_string(root().join("src/auth.rs")).unwrap();
+    assert!(auth.contains("fn store_app_password") && auth.contains("kr_set(&app_key(email), password)"), "app passwords go to the keyring");
+    for f in ["src/storage.rs", "src/notify.rs", "src/drafts.rs"] {
+        let text = std::fs::read_to_string(root().join(f)).unwrap();
+        assert!(!text.contains("app_password"), "{f} must not store app passwords");
+    }
+}

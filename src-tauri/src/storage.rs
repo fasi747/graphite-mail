@@ -256,6 +256,18 @@ CREATE TABLE IF NOT EXISTS message_labels (
 );
 CREATE INDEX IF NOT EXISTS idx_message_labels_folder ON message_labels(folder_id);
 
+-- IMAP accounts: every (folder, UID) a message is stored under on the server. message_id has no foreign key
+-- on purpose: after a message is deleted here, its location is still needed to delete it on the server.
+CREATE TABLE IF NOT EXISTS imap_uids (
+    folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    uid INTEGER NOT NULL,
+    validity INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (folder_id, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_imap_uids_message ON imap_uids(message_id);
+
 -- Per-account sync bookmarks (e.g. Gmail history id).
 CREATE TABLE IF NOT EXISTS account_state (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

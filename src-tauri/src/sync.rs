@@ -106,10 +106,10 @@ pub async fn sync_all() -> Result<SyncReport> {
     let mut errors = vec![];
     for acc in &accounts {
         let account_id = ensure_account(acc)?;
-        let r = if acc.provider == "google" {
-            auth::in_account(Some(acc.email.clone()), crate::google::sync_account(&account_id)).await
-        } else {
-            auth::in_account(Some(acc.email.clone()), sync_microsoft(&account_id)).await
+        let r = match acc.provider.as_str() {
+            "google" => auth::in_account(Some(acc.email.clone()), crate::google::sync_account(&account_id)).await,
+            crate::imap::PROVIDER => auth::in_account(Some(acc.email.clone()), crate::imap::sync_account(&account_id)).await,
+            _ => auth::in_account(Some(acc.email.clone()), sync_microsoft(&account_id)).await,
         };
         match r {
             Ok(part) => {

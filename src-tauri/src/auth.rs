@@ -20,13 +20,14 @@ const RULES_SCOPE: &str = "MailboxSettings.ReadWrite";
 fn scopes(rules: bool) -> String {
     if rules { format!("{SCOPES} {RULES_SCOPE}") } else { SCOPES.to_string() }
 }
+#[cfg(not(test))]
 const KEYRING_SERVICE: &str = "graphite-mail";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Account {
     pub email: String,
     pub display_name: String,
-    /// "microsoft" or "google"
+    /// "microsoft", "google" (Gmail through Google sign-in) or "imap" (Gmail through IMAP/SMTP with an app password)
     #[serde(default = "default_provider")]
     pub provider: String,
     /// The account has granted the extra permission that mail rules need.
@@ -89,16 +90,16 @@ fn rt_key(email: &str) -> String {
 
 /// All signed-in accounts, oldest first. Migrates the single-account format of earlier versions.
 pub fn accounts() -> Vec<Account> {
-    if let Some(list) = entry("accounts").ok().and_then(|e| e.get_password().ok()).and_then(|s| serde_json::from_str::<Vec<Account>>(&s).ok()) {
+    if let Some(list) = kr_get("accounts").ok().and_then(|s| serde_json::from_str::<Vec<Account>>(&s).ok()) {
         return list;
     }
     // Earlier versions kept one account under "account" + "refresh_token".
-    let legacy: Option<Account> = entry("account").ok().and_then(|e| e.get_password().ok()).and_then(|s| serde_json::from_str(&s).ok());
-    let rt = entry("refresh_token").ok().and_then(|e| e.get_password().ok());
+    let legacy: Option<Account> = kr_get("account").ok().and_then(|s| serde_json::from_str(&s).ok());
+    let rt = kr_get("refresh_token").ok();
     if let (Some(acc), Some(rt)) = (legacy, rt) {
-        if entry(&rt_key(&acc.email)).and_then(|e| Ok(e.set_password(&rt)?)).is_ok() && save_accounts(&[acc.clone()]).is_ok() {
-            let _ = entry("account").map(|e| e.delete_credential());
-            let _ = entry("refresh_token").map(|e| e.delete_credential());
+        if kr_set(&rt_key(&acc.email), &rt).is_ok() && save_accounts(&[acc.clone()]).is_ok() {
+            kr_delete("account");
+            kr_delete("refresh_token");
         }
         return vec![acc];
     }
@@ -106,13 +107,17 @@ pub fn accounts() -> Vec<Account> {
 }
 
 fn save_accounts(list: &[Account]) -> Result<()> {
-    entry("accounts")?.set_password(&serde_json::to_string(list)?)?;
-    Ok(())
+    kr_set("accounts", &serde_json::to_string(list)?)
 }
 
 /// Adds or updates an account after a successful sign-in.
 pub fn remember(acc: &Account, refresh_token: &str) -> Result<()> {
-    entry(&rt_key(&acc.email))?.set_password(refresh_token)?;
+    kr_set(&rt_key(&acc.email), refresh_token)?;
+    remember_account(acc)
+}
+
+/// Adds or updates an account in the list, without touching its sign-in secret.
+pub fn remember_account(acc: &Account) -> Result<()> {
     let mut list = accounts();
     match list.iter_mut().find(|a| a.email.eq_ignore_ascii_case(&acc.email)) {
         Some(a) => {
@@ -126,19 +131,74 @@ pub fn remember(acc: &Account, refresh_token: &str) -> Result<()> {
 }
 
 pub fn refresh_token_for(email: &str) -> Result<String> {
-    entry(&rt_key(email))?.get_password().context("Not signed in")
+    kr_get(&rt_key(email)).context("Not signed in")
 }
 
 pub fn store_refresh_token(email: &str, rt: &str) -> Result<()> {
-    Ok(entry(&rt_key(email))?.set_password(rt)?)
+    kr_set(&rt_key(email), rt)
+}
+
+fn app_key(email: &str) -> String {
+    format!("app:{}", email.to_lowercase())
+}
+
+/// IMAP accounts: the Google app password. It lives only in the keyring, never in a file or the database.
+pub fn store_app_password(email: &str, password: &str) -> Result<()> {
+    kr_set(&app_key(email), password)
+}
+
+pub fn app_password(email: &str) -> Result<String> {
+    kr_get(&app_key(email))
+}
+
+pub fn forget_app_password(email: &str) {
+    kr_delete(&app_key(email));
 }
 
 pub(crate) fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
+#[cfg(not(test))]
 fn entry(key: &str) -> Result<keyring::Entry> {
     Ok(keyring::Entry::new(KEYRING_SERVICE, key)?)
+}
+
+#[cfg(not(test))]
+fn kr_get(key: &str) -> Result<String> {
+    Ok(entry(key)?.get_password()?)
+}
+
+#[cfg(not(test))]
+fn kr_set(key: &str, value: &str) -> Result<()> {
+    Ok(entry(key)?.set_password(value)?)
+}
+
+#[cfg(not(test))]
+fn kr_delete(key: &str) {
+    if let Ok(e) = entry(key) {
+        let _ = e.delete_credential();
+    }
+}
+
+/// Tests use an in-memory keyring instead of the desktop's.
+#[cfg(test)]
+pub(crate) static TEST_KEYRING: Mutex<Option<std::collections::HashMap<String, String>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn kr_get(key: &str) -> Result<String> {
+    TEST_KEYRING.lock().unwrap().get_or_insert_with(Default::default).get(key).cloned().ok_or_else(|| anyhow!("No such keyring entry"))
+}
+
+#[cfg(test)]
+fn kr_set(key: &str, value: &str) -> Result<()> {
+    TEST_KEYRING.lock().unwrap().get_or_insert_with(Default::default).insert(key.to_string(), value.to_string());
+    Ok(())
+}
+
+#[cfg(test)]
+fn kr_delete(key: &str) {
+    TEST_KEYRING.lock().unwrap().get_or_insert_with(Default::default).remove(key);
 }
 
 /// Runs the interactive sign-in. `open` is called with the URL to show in the system browser.
@@ -297,8 +357,11 @@ pub async fn access_token() -> Result<String> {
         return Ok(t);
     }
     let acc = accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email));
-    if acc.as_ref().map(|a| a.provider.as_str()) == Some("google") {
-        return crate::google::access_token(&email).await;
+    match acc.as_ref().map(|a| a.provider.as_str()) {
+        Some("google") => return crate::google::access_token(&email).await,
+        // IMAP accounts sign in to the mail server with their app password; they have no OAuth token.
+        Some(crate::imap::PROVIDER) => return Err(anyhow!("{email} uses an app password, not a sign-in token")),
+        _ => {}
     }
     let rt = refresh_token_for(&email)?;
     let scope = scopes(acc.as_ref().is_some_and(|a| a.rules));
@@ -331,13 +394,14 @@ pub fn sign_out_account(email: Option<&str>) -> Result<()> {
     let list = accounts();
     let (gone, keep): (Vec<_>, Vec<_>) = list.into_iter().partition(|a| email.map_or(true, |e| a.email.eq_ignore_ascii_case(e)));
     for a in &gone {
-        let _ = entry(&rt_key(&a.email))?.delete_credential();
+        kr_delete(&rt_key(&a.email));
+        kr_delete(&app_key(&a.email));
         if let Some(c) = CACHE.lock().unwrap().as_mut() {
             c.remove(&a.email.to_lowercase());
         }
     }
     if keep.is_empty() {
-        let _ = entry("accounts")?.delete_credential();
+        kr_delete("accounts");
     } else {
         save_accounts(&keep)?;
     }

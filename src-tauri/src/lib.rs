@@ -5,6 +5,7 @@ mod calendar;
 mod folders;
 mod google;
 mod http;
+mod imap;
 mod links;
 mod mail;
 mod notify;
@@ -41,6 +42,7 @@ fn current_account() -> Option<Account> {
 fn sign_out() -> CmdResult<()> {
     for a in auth::accounts() {
         let _ = sync::forget_account_data(&a.email);
+        imap::forget(&a.email);
     }
     auth::sign_out().map_err(|e| e.to_string())
 }
@@ -54,6 +56,7 @@ fn list_accounts() -> Vec<Account> {
 #[tauri::command]
 fn remove_account(email: String) -> CmdResult<()> {
     sync::forget_account_data(&email).map_err(|e| e.to_string())?;
+    imap::forget(&email);
     auth::sign_out_account(Some(&email)).map_err(|e| e.to_string())
 }
 
@@ -62,6 +65,13 @@ async fn add_google_account(app: tauri::AppHandle) -> CmdResult<Account> {
     google::sign_in(|url| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string())))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Gmail with an app password (IMAP + SMTP): checks both servers accept it, then keeps it in the keyring.
+/// Needs no Google sign-in client, so it works in every build.
+#[tauri::command]
+async fn add_imap_account(email: String, password: String) -> CmdResult<Account> {
+    imap::add_account(&email, &password).await.map_err(|e| e.to_string())
 }
 
 /// Confirms the stored session still works by silently refreshing a token.
@@ -122,7 +132,14 @@ fn list_messages(folder_id: String, offset: i64, limit: i64) -> CmdResult<Vec<ma
 }
 
 #[tauri::command]
-fn get_message(id: String) -> CmdResult<mail::MessageDetail> {
+async fn get_message(id: String) -> CmdResult<mail::MessageDetail> {
+    // IMAP accounts download a body when it is first opened, if the background download hasn't reached it yet.
+    // Offline, this gives up quickly and shows what is here; the next open tries again.
+    match tokio::time::timeout(std::time::Duration::from_secs(15), imap::ensure_body(&id)).await {
+        Ok(Err(e)) => eprintln!("[graphite] couldn't download the message: {e}"),
+        Err(_) => eprintln!("[graphite] downloading the message took too long"),
+        Ok(Ok(())) => {}
+    }
     mail::message(&id).map_err(|e| e.to_string())
 }
 
@@ -305,7 +322,11 @@ async fn run_rule(id: String, folder_id: String) -> CmdResult<usize> {
 #[tauri::command]
 async fn enable_rules(app: tauri::AppHandle, email: String) -> CmdResult<Account> {
     let open = |url: &str| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()));
-    let provider = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).map(|a| a.provider).ok_or("Unknown account")?;
+    let found = auth::accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)).ok_or("Unknown account")?;
+    if found.provider == imap::PROVIDER {
+        return Ok(found); // rules of app-password accounts are kept on this computer: nothing to allow
+    }
+    let provider = found.provider;
     let acc = if provider == "google" { google::sign_in_with(open, true, Some(&email)).await } else { auth::sign_in_with(open, true, Some(&email)).await }.map_err(|e| e.to_string())?;
     if !acc.email.eq_ignore_ascii_case(&email) {
         return Err(format!("You signed in as {}, but this rule belongs to {email}. Please try again with {email}.", acc.email));
@@ -471,6 +492,7 @@ pub fn run() {
             enable_rules,
             remove_account,
             add_google_account,
+            add_imap_account,
             get_notifications,
             set_notifications,
             create_folder,

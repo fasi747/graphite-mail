@@ -14,6 +14,7 @@ import { ask, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { ContextMenu, FolderPicker, MenuItem, QuickRule, RuleDialog } from "./ContextMenu";
 import { Selection, bulkFlag, bulkRead, clickSelect, prune, selectAll, single } from "./selection";
 import { THEMES, ThemeChoice, applyTheme, cachedChoice, isChoice, isDark, resolveTheme } from "./theme";
+import { isGmail } from "./accounts";
 
 type Account = { email: string; display_name: string; provider?: string; rules?: boolean };
 const ALL = "all-inboxes";
@@ -441,7 +442,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   };
   const deleteFolder = async () => {
     if (!current || builtIn) return;
-    const gmail = providerOf(current.account_email) === "google";
+    const gmail = isGmail(providerOf(current.account_email));
     if (!(await ask(gmail ? `Delete the label "${current.name}"? Its messages stay in your Gmail account (in All Mail).` : `Delete the folder "${current.name}" and everything in it? Microsoft 365 moves it to Deleted Items.`, { title: "Delete folder", kind: "warning" }))) return;
     try {
       await invoke("delete_folder", { id: current.id });
@@ -460,7 +461,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   // Moving and copying stay within one account.
   const tAcct = targets.length && targets.every((m) => m.account_email === targets[0].account_email) ? targets[0].account_email : null;
   const folderChoices = (kind: "move" | "copy") => (tAcct ? buildTree(folders.filter((f) => f.account_email === tAcct)) : [])
-    .filter(({ f }) => f.id !== folderId && !(providerOf(f.account_email) === "google" && (f.well_known === "sentitems" || f.well_known === "drafts"))
+    .filter(({ f }) => f.id !== folderId && !(isGmail(providerOf(f.account_email)) && (f.well_known === "sentitems" || f.well_known === "drafts"))
       && !(kind === "copy" && ["deleteditems", "junkemail", "sentitems", "drafts"].includes(f.well_known ?? "")));
   const inJunk = current?.well_known === "junkemail";
   const markReadLabel = bulkRead(targets) ? "Mark Read" : "Mark Unread";
