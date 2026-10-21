@@ -12,6 +12,17 @@
   notifications go through Tauri's cross-platform plugins (no `xdg-open`, no D-Bus calls in the app's own code).
 - GitHub Actions: a version tag runs the tests on Linux and Windows, builds the `.deb` and the Windows installer on
   separate runners and attaches both to a **draft** release. The Google client secret is never used there.
+- **Contacts for Gmail (app password) accounts**, kept on this computer:
+  - **People you've emailed**: built from the From/To/Cc headers of synced mail (name, address, messages exchanged,
+    last contacted; newest first), updated after every sync without re-reading old mail. Spam, Bin and drafts are
+    ignored, as are no-reply boxes, bounce handlers, notification and newsletter senders and mailing-list plumbing.
+  - **Import contacts…**: vCard 2.1/3.0/4.0 (folded lines, quoted-printable, several addresses and phones, ORG/TITLE)
+    and Google Contacts CSV (classic and current column layouts, `:::`-separated values, quoted cells; Outlook-style
+    columns too), in UTF-8, UTF-16 or Windows-1252. Duplicates merge by address, inside the file and against earlier
+    imports. Stored as **Imported**.
+  - Both groups work with the right-click menu, favourites, vCard export and To/Cc/Bcc suggestions. A note says
+    "Google contacts need Google sign-in, coming in a later update."
+  - **Remove cached contacts** now also clears these; removing the account deletes them.
 
 ## 1.10.3 — Bcc
 - **Bcc** in the editor for every account type. The row is hidden until you press the **Bcc** link beside Cc (it opens

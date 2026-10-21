@@ -301,7 +301,8 @@ async fn search_suggestions_removal_and_account_deletion() {
     let s = suggest("an", "me@corp.com", 8).unwrap();
     assert_eq!(s.iter().map(|x| x.email.as_str()).collect::<Vec<_>>(), vec!["anna@home.com", "anna@work.com", "ana@corp.com"], "own contacts first");
     assert!(suggest("a", "me@corp.com", 8).unwrap().is_empty(), "two letters at least");
-    assert!(suggest("an", "me@gmail.com", 8).unwrap().is_empty(), "no suggestions for Gmail / IMAP accounts");
+    assert!(suggest("an", "me@gmail.com", 8).unwrap().is_empty(), "a Gmail (app password) account only suggests its own local contacts (none yet)");
+    assert!(suggest("an", "nobody@nowhere.com", 8).unwrap().is_empty(), "unknown account");
 
     // "Remove cached contacts": gone, and not downloaded again until "Refresh contacts".
     remove_cached_for("me@corp.com").unwrap();
@@ -315,7 +316,8 @@ async fn search_suggestions_removal_and_account_deletion() {
     fake.lock().unwrap().on("/me/people", vec![ok(json!({ "value": [] }))]);
     let after = refresh(Some("me@corp.com")).await.unwrap();
     assert_eq!((after[0].directory.as_str(), after[0].directory_count), ("ok", 1), "Refresh brings them back");
-    assert!(remove_cached_for("me@gmail.com").is_err());
+    remove_cached_for("me@gmail.com").unwrap(); // v1.11: Gmail (app password) accounts have local contacts to remove
+    assert!(remove_cached_for("nobody@nowhere.com").is_err());
 
     // Removing the account deletes its cached contacts.
     seed();
@@ -328,6 +330,7 @@ fn d(name: &str) -> Detail {
     Detail {
         id: "x".into(), source: PERSONAL.into(), account_email: "me@corp.com".into(), folder: None, name: name.into(),
         emails: vec![], phones: vec![], job_title: None, department: None, office: None, company: None, given_name: None, surname: None, favourite: false,
+        message_count: None, last_contacted: None,
     }
 }
 

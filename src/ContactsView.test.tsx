@@ -2,10 +2,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import ContactsView, { ContactDetail, ContactRow, ContactStatus, Overview, statusNote } from "./ContactsView";
+import ContactsView, { ContactDetail, ContactRow, ContactStatus, GOOGLE_CONTACTS_NOTE, Overview, contactedLine, importLine, statusNote } from "./ContactsView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(async () => "/home/me/Ana Diaz.vcf") }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(async () => "/home/me/Ana Diaz.vcf"), open: vi.fn(async () => "/home/me/contacts.csv") }));
+const google = { email: "me@gmail.com", display_name: "Gm", provider: "google" };
 const mocked = vi.mocked(invoke);
 
 const ms = { email: "me@corp.com", display_name: "Me", provider: "microsoft" };
@@ -47,7 +48,7 @@ afterEach(cleanup);
 describe("Contacts view", () => {
   it("shows the directory and my contacts as groups with counts, and folds them", async () => {
     backend();
-    render(<ContactsView accounts={[ms, gmail]} onNewEmail={() => {}} onToast={() => {}} />);
+    render(<ContactsView accounts={[ms, google]} onNewEmail={() => {}} onToast={() => {}} />); // a Google sign-in account has no contacts yet
     const dir = await screen.findByRole("group", { name: "Directory" });
     await waitFor(() => expect(within(dir).getByText("Ana Diaz")).toBeTruthy());
     expect(within(dir).getByRole("button", { name: /Directory\s*2/ })).toBeTruthy();
@@ -120,9 +121,9 @@ describe("Contacts view", () => {
     await waitFor(() => expect(calls("refresh_contacts").length).toBe(1));
   });
 
-  it("says contacts need a Microsoft 365 account", () => {
-    render(<ContactsView accounts={[gmail]} onNewEmail={() => {}} onToast={() => {}} />);
-    expect(screen.getByText("Contacts are available for Microsoft 365 accounts.")).toBeTruthy();
+  it("says contacts need a Microsoft 365 or Gmail app-password account (Google sign-in accounts have none yet)", () => {
+    render(<ContactsView accounts={[google]} onNewEmail={() => {}} onToast={() => {}} />);
+    expect(screen.getByText("Contacts are available for Microsoft 365 accounts and Gmail (app password) accounts.")).toBeTruthy();
     expect(mocked).not.toHaveBeenCalled();
   });
 
@@ -278,5 +279,82 @@ describe("Contacts right-click menu", () => {
     render(<ContactsView accounts={[ms]} {...handlers()} />);
     await screen.findByText("Ben Ode");
     expect(screen.queryByRole("group", { name: "Favourites" })).toBeNull();
+  });
+});
+
+describe("Gmail (app password) contacts", () => {
+  const emailedRow = (id: string, name: string, email: string, count: number, last: number): ContactRow =>
+    ({ id, source: "emailed", account_email: "me@gmail.com", name, email, subtitle: null, message_count: count, last_contacted: last });
+  const importedRow = (id: string, name: string, email: string): ContactRow => ({ id, source: "imported", account_email: "me@gmail.com", name, email, subtitle: "Contoso" });
+  function local(extra: Record<string, (args?: any) => unknown> = {}) {
+    mocked.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd in extra) return extra[cmd](args);
+      switch (cmd) {
+        case "contacts_overview": return {
+          favourites: { total: 0, rows: [] }, directory: { total: 2, rows: ROWS.filter((r) => r.source === "directory") }, personal: { total: 0, rows: [] },
+          emailed: { total: 2, rows: [emailedRow("e1", "Ben Ode", "ben@x.com", 12, 1_750_000_000), emailedRow("e2", "ana@x.com", "ana@x.com", 1, 1_700_000_000)] },
+          imported: { total: 1, rows: [importedRow("i1", "Cara Lim", "cara@x.com")] },
+          accounts: [ok],
+        } satisfies Overview;
+        case "contact_detail": return { id: "e1", source: "emailed", account_email: "me@gmail.com", folder: null, name: "Ben Ode", emails: ["ben@x.com"], phones: [],
+          job_title: null, department: null, office: null, company: null, message_count: 12, last_contacted: 1_750_000_000 } satisfies ContactDetail;
+        case "import_contacts": return { added: 3, updated: 1, skipped: 0 };
+        default: return null;
+      }
+    });
+  }
+
+  it("shows people you've emailed (with counts) and imported contacts, the Google note and Import, but no directory", async () => {
+    local();
+    render(<ContactsView accounts={[gmail]} onNewEmail={() => {}} onToast={() => {}} />);
+    const people = await screen.findByRole("group", { name: "People you've emailed" });
+    expect(within(people).getByRole("button", { name: /People you've emailed\s*2/ })).toBeTruthy();
+    expect(within(people).getByText("Ben Ode")).toBeTruthy();
+    expect(within(people).getByText(/ben@x\.com · 12 messages · last/)).toBeTruthy();
+    expect(within(people).getByText(/1 message · last/)).toBeTruthy();
+    const imported = screen.getByRole("group", { name: "Imported" });
+    expect(within(imported).getByText("Cara Lim")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Directory" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "My contacts" })).toBeNull();
+    expect(screen.getByRole("note").textContent).toContain(GOOGLE_CONTACTS_NOTE);
+    expect(screen.getByRole("button", { name: "Import contacts…" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Grant access" })).toBeNull();
+    // The detail pane shows the counts and the source.
+    fireEvent.click(within(people).getByText("Ben Ode"));
+    const pane = screen.getByRole("region", { name: "Contact details" });
+    await waitFor(() => expect(within(pane).getByText("12")).toBeTruthy());
+    expect(within(pane).getByText("People you've emailed")).toBeTruthy();
+  });
+
+  it("imports a file into the Gmail account and says what happened", async () => {
+    local();
+    const onToast = vi.fn();
+    render(<ContactsView accounts={[gmail]} onNewEmail={() => {}} onToast={onToast} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Import contacts…" }));
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("import_contacts", { account: "me@gmail.com", path: "/home/me/contacts.csv" }));
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith("4 contacts imported (1 updated)"));
+  });
+
+  it("with both kinds of account shows every group, and the account filter narrows to one kind", async () => {
+    local();
+    render(<ContactsView accounts={[ms, gmail]} onNewEmail={() => {}} onToast={() => {}} />);
+    expect(await screen.findByRole("group", { name: "Directory" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "People you've emailed" })).toBeTruthy();
+    const select = screen.getByRole("combobox", { name: "Account" }) as HTMLSelectElement;
+    expect(select.options[0].textContent).toBe("All accounts");
+    fireEvent.change(select, { target: { value: "me@corp.com" } });
+    await waitFor(() => expect(screen.queryByRole("group", { name: "People you've emailed" })).toBeNull());
+    expect(screen.queryByRole("note")).toBeNull(); // the Google note only goes with Gmail accounts
+    fireEvent.change(select, { target: { value: "me@gmail.com" } });
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Directory" })).toBeNull());
+    expect(screen.getByRole("group", { name: "Imported" })).toBeTruthy();
+  });
+
+  it("words the counts and the import result", () => {
+    expect(contactedLine(1, null)).toBe("1 message");
+    expect(contactedLine(0, undefined)).toBe("0 messages");
+    expect(contactedLine(5, 1_700_000_000)).toMatch(/^5 messages · last .*2023$/);
+    expect(importLine({ added: 1, updated: 0, skipped: 0 })).toBe("1 contact imported");
+    expect(importLine({ added: 2, updated: 1, skipped: 3 })).toBe("3 contacts imported (1 updated, 3 skipped)");
   });
 });

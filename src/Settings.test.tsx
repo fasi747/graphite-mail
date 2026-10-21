@@ -109,13 +109,16 @@ describe("Settings → Accounts", () => {
     await waitFor(() => expect(screen.queryByText(/coming soon/)).toBeNull());
   });
 
-  it("removes one Microsoft account's cached contacts", async () => {
+  it("removes one account's cached contacts (Microsoft 365: downloaded; Gmail app password: local)", async () => {
     backend(true);
     render(<Settings accounts={[...accounts, { email: "me@gmail.com", display_name: "Gm", provider: "imap" }]} onClose={() => {}} onAccountsChanged={() => {}} theme="system" onTheme={() => {}} />);
     const buttons = screen.getAllByRole("button", { name: "Remove cached contacts" });
-    expect(buttons).toHaveLength(1); // not for the Gmail (app password) account
+    expect(buttons).toHaveLength(2); // v1.11: the Gmail (app password) account has local contacts too
     fireEvent.click(buttons[0]);
     await waitFor(() => expect(mocked).toHaveBeenCalledWith("remove_cached_contacts", { email: "work@corp.com" }));
     expect(await screen.findByText(/Cached contacts of work@corp.com were removed/)).toBeTruthy();
+    fireEvent.click(buttons[1]);
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("remove_cached_contacts", { email: "me@gmail.com" }));
+    expect(await screen.findByText(/People you've emailed and imported contacts of me@gmail.com were removed/)).toBeTruthy();
   });
 });

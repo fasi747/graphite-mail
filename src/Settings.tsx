@@ -58,7 +58,12 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
   }
   async function removeContacts(a: Acct) {
     setError(""); setMessage("");
-    try { await invoke("remove_cached_contacts", { email: a.email }); setMessage(`Cached contacts of ${a.email} were removed. Contacts → Refresh contacts downloads them again.`); }
+    try {
+      await invoke("remove_cached_contacts", { email: a.email });
+      setMessage(a.provider === "imap"
+        ? `People you've emailed and imported contacts of ${a.email} were removed. Contacts → Refresh contacts rebuilds the people list from your mail; imported contacts need importing again.`
+        : `Cached contacts of ${a.email} were removed. Contacts → Refresh contacts downloads them again.`);
+    }
     catch (e) { setError(String(e)); }
   }
   async function remove(a: Acct) {
@@ -110,8 +115,8 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
               <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider)}</span></div>
-              {(a.provider ?? "microsoft") === "microsoft" && (
-                <button disabled={!!moving} title="Delete this account's downloaded contacts from this computer" onClick={() => removeContacts(a)}>Remove cached contacts</button>
+              {(a.provider ?? "microsoft") !== "google" && (
+                <button disabled={!!moving} title={a.provider === "imap" ? "Delete this account's people-you've-emailed list and imported contacts from this computer" : "Delete this account's downloaded contacts from this computer"} onClick={() => removeContacts(a)}>Remove cached contacts</button>
               )}
               <button disabled={!!moving} onClick={() => remove(a)}>Remove</button>
             </div>

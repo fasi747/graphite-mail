@@ -136,6 +136,10 @@ fn migrate(conn: &Connection) -> Result<()> {
         // v1.10.1: name parts for vCard export (filled in by the next contacts sync).
         conn.execute_batch("ALTER TABLE contacts ADD COLUMN given_name TEXT; ALTER TABLE contacts ADD COLUMN surname TEXT;")?;
     }
+    if !has("contacts", "message_count")? {
+        // v1.11.0: "People you've emailed" for Gmail (app password) accounts.
+        conn.execute_batch("ALTER TABLE contacts ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0; ALTER TABLE contacts ADD COLUMN last_contacted INTEGER;")?;
+    }
     if !has("drafts", "bcc_text")? {
         // v1.10.3: blind copies in drafts.
         conn.execute_batch("ALTER TABLE drafts ADD COLUMN bcc_text TEXT NOT NULL DEFAULT ''")?;
@@ -288,7 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_imap_uids_message ON imap_uids(message_id);
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    source TEXT NOT NULL,              -- 'directory' or 'personal'
+    source TEXT NOT NULL,              -- 'directory', 'personal' (Microsoft 365), 'emailed', 'imported' (Gmail app password)
     remote_id TEXT NOT NULL,
     folder_id TEXT,                    -- personal: the contact folder it is in
     folder_name TEXT,
@@ -303,6 +307,8 @@ CREATE TABLE IF NOT EXISTS contacts (
     company TEXT,
     search_text TEXT NOT NULL DEFAULT '',  -- lower-case name, emails, title, department for searching
     sync_gen INTEGER NOT NULL DEFAULT 0,   -- full listings: rows not seen in the latest one are removed
+    message_count INTEGER NOT NULL DEFAULT 0, -- "people you've emailed": messages exchanged with them
+    last_contacted INTEGER,                -- "people you've emailed": when the latest of those arrived
     UNIQUE(account_id, source, remote_id)
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_list ON contacts(account_id, source, display_name);

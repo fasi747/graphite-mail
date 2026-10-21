@@ -117,4 +117,37 @@
 8. The `cargo test` run on the Windows runner itself (file-locking differences in the migration tests; see 2).
 9. MSVC build: the sandbox cross-check used the GNU target; the CI uses MSVC (what Tauri supports). aws-lc-sys needs
    NASM + CMake there (the workflow installs NASM; CMake is on the runner image).
-10. Whether pushing `.github/workflows/` is accepted (see below).
+10. ~~Whether pushing `.github/workflows/` is accepted~~ — it was: the push with `.github/workflows/release.yml` succeeded.
+
+## Task 4 — Gmail contacts for IMAP accounts (in v1.11.0)  ✅
+- New `src-tauri/src/local_contacts.rs` (+ `local_contacts_tests.rs`). Both kinds live in the existing `contacts`
+  table under the IMAP account (sources `emailed` and `imported`), so favourites (keyed by address for emailed
+  people, so they survive a rebuild), the right-click menu, vCard export, `suggest_recipients` (To/Cc/Bcc), "Remove
+  cached contacts" (`DELETE … WHERE account_id`) and account removal (`ON DELETE CASCADE`) needed no new plumbing.
+- **People you've emailed**: `rebuild_people(account_id)` runs after each IMAP sync (`sync.rs`) and on Refresh
+  contacts. Incremental: a bookmark `contacts:people:scan = "<max rowid>:<rows up to it>"` in `account_state`; only
+  newer messages are read, counts are added, the name comes from the newest message that had one. If older rows were
+  deleted (count mismatch) it does a full rebuild so counts never drift. Skips the account's own address, Spam/Bin/
+  Drafts folders and `is_automated()` senders (no-reply variants, mailer-daemon, postmaster, bounce(s), notification(s),
+  newsletter, digest, list `-request/-owner`, VERP-like long hex local parts, and names like "Mail Delivery
+  Subsystem"). Columns `message_count`, `last_contacted` added to `contacts` (schema + migration).
+- **Import**: `decode_text` (UTF-8 BOM, UTF-16 LE/BE BOM, UTF-8, else Windows-1252), `parse_vcards` (2.1/3.0/4.0,
+  folding, QP soft breaks, `item1.` groups, bare 2.1 type words, `\,` escapes, tel: URIs), `parse_csv` (RFC 4180) +
+  `parse_contacts_csv` (classic and 2023+ Google layouts, Outlook columns, ` ::: ` multi-values), `dedupe` (by address,
+  nameless entries by name), `store_imported` (merges into an existing imported contact sharing an address). Files
+  over 50 MB refused. Command `import_contacts { account, path }`.
+- UI (`ContactsView.tsx`): groups "People you've emailed" (newest first, "addr · 12 messages · last 3 Oct 2026") and
+  "Imported"; groups shown depend on the kinds of accounts present / the account filter; Google note (`role=note`)
+  with the **Import contacts…** button, plus a toolbar import icon; detail pane shows Messages / Last contacted and
+  the source. `Settings.tsx`: Remove cached contacts for IMAP accounts too (different wording).
+- Decisions: Bcc of a message is never known, so it never counts. Imports go into the account chosen in the filter,
+  else the first Gmail (app password) account. Block sender / Create rule stay in the menu for IMAP accounts: rules
+  for those accounts are local (existing behaviour).
+- Tests changed because the old limitation went away (noted as the task asked): `contacts_tests.rs` no longer expects
+  "no suggestions for IMAP accounts" / `remove_cached_for(gmail)` to fail; `ContactsView.test.tsx` "says contacts need
+  a Microsoft 365 account" now uses a Google-sign-in account; `Mailbox.test.tsx` likewise; `Settings.test.tsx` expects
+  the Remove cached contacts button for the IMAP account too.
+- Counts: Rust 83 (+8), frontend 88 (+5 ContactsView, +1 Mailbox). tsc clean.
+- Needs a real-world check: a real Gmail mailbox's sender mix (how well `is_automated` separates machines from
+  people; the list is deliberately conservative: `info@`/`support@` count as people); a real Google Contacts export
+  (both layouts were written from memory of the format); vCards from iOS / Android / Outlook.

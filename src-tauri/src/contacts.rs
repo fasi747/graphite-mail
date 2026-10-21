@@ -530,15 +530,31 @@ pub async fn sync_account(account_id: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Accounts that have contacts on this computer: Microsoft 365 (synced) and Gmail app password (local).
 fn account_id_of(email: &str) -> Result<String> {
-    microsoft_accounts(Some(email))?.into_iter().next().map(|(id, _)| id).ok_or_else(|| anyhow!("Contacts are available for Microsoft 365 accounts."))
+    storage::with_db(|db| {
+        Ok(db
+            .query_row("SELECT id FROM accounts WHERE lower(email)=lower(?1) AND COALESCE(provider,'microsoft') IN ('microsoft','imap')", [email], |r| r.get(0))
+            .optional()?
+            .ok_or_else(|| anyhow!("Contacts are available for Microsoft 365 and Gmail (app password) accounts."))?)
+    })
 }
 
 /// "Refresh contacts": syncs every Microsoft account now (or just `only`), and returns how each one stands.
 pub async fn refresh(only: Option<&str>) -> Result<Vec<AccountStatus>> {
-    for acc in auth::accounts().into_iter().filter(|a| a.provider == "microsoft" && only.is_none_or(|o| a.email.eq_ignore_ascii_case(o))) {
-        let id = crate::sync::ensure_account_pub(&acc)?;
-        auth::in_account(Some(acc.email.clone()), sync_account(&id, true)).await?;
+    for acc in auth::accounts().into_iter().filter(|a| only.is_none_or(|o| a.email.eq_ignore_ascii_case(o))) {
+        match acc.provider.as_str() {
+            "microsoft" => {
+                let id = crate::sync::ensure_account_pub(&acc)?;
+                auth::in_account(Some(acc.email.clone()), sync_account(&id, true)).await?;
+            }
+            crate::imap::PROVIDER => {
+                // Local contacts: un-pause after "Remove cached contacts" and rebuild "People you've emailed" from the mail here.
+                let id = crate::sync::ensure_account_pub(&acc)?;
+                crate::local_contacts::refresh_people(&id)?;
+            }
+            _ => {}
+        }
     }
     statuses(only)
 }
@@ -572,6 +588,9 @@ pub struct Row {
     /// Job title, or the department / company when there is no title.
     pub subtitle: Option<String>,
     pub favourite: bool,
+    /// "People you've emailed": messages exchanged and when the latest arrived.
+    pub message_count: Option<i64>,
+    pub last_contacted: Option<i64>,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -598,6 +617,9 @@ pub struct Overview {
     pub favourites: Group,
     pub directory: Group,
     pub personal: Group,
+    /// Gmail (app password) accounts: people from the mail's headers, and contacts imported from files.
+    pub emailed: Group,
+    pub imported: Group,
     pub accounts: Vec<AccountStatus>,
 }
 
@@ -623,6 +645,10 @@ pub struct Detail {
     pub given_name: Option<String>,
     pub surname: Option<String>,
     pub favourite: bool,
+    #[serde(default)]
+    pub message_count: Option<i64>,
+    #[serde(default)]
+    pub last_contacted: Option<i64>,
 }
 
 /// Microsoft accounts (rows of the accounts table): (id, email).
@@ -643,11 +669,19 @@ fn terms(query: &str) -> Vec<String> {
 
 const IS_FAVOURITE: &str = "EXISTS (SELECT 1 FROM contact_favourites f WHERE f.account_id=c.account_id AND f.source=c.source AND f.remote_id=c.remote_id)";
 
-/// One group of the list: "directory", "personal", or "favourites" (both sources, favourites only).
+/// One group of the list: "directory", "personal" (Microsoft 365), "emailed", "imported" (Gmail app password), or
+/// "favourites" (every source, favourites only).
 fn group(source: &str, query: &str, account: Option<&str>, limit: i64) -> Result<Group> {
+    use crate::local_contacts::{EMAILED, IMPORTED};
     let t = terms(query);
     let which = if source == FAVOURITES { format!("{IS_FAVOURITE} AND ?1 IS NOT NULL") } else { "c.source=?1".to_string() };
-    let mut filter = format!("{which} AND COALESCE(a.provider,'microsoft')='microsoft' AND (?2 IS NULL OR lower(a.email)=lower(?2))");
+    let provider = match source {
+        EMAILED | IMPORTED => "='imap'",
+        FAVOURITES => " IN ('microsoft','imap')",
+        _ => "='microsoft'",
+    };
+    let order = if source == EMAILED { "COALESCE(c.last_contacted,0) DESC, c.display_name COLLATE NOCASE" } else { "c.display_name COLLATE NOCASE, c.id" };
+    let mut filter = format!("{which} AND COALESCE(a.provider,'microsoft'){provider} AND (?2 IS NULL OR lower(a.email)=lower(?2))");
     for i in 0..t.len() {
         filter.push_str(&format!(" AND instr(c.search_text, ?{}) > 0", i + 3));
     }
@@ -659,13 +693,19 @@ fn group(source: &str, query: &str, account: Option<&str>, limit: i64) -> Result
         let from = "contacts c JOIN accounts a ON a.id=c.account_id";
         let total: i64 = db.query_row(&format!("SELECT COUNT(*) FROM {from} WHERE {filter}"), rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
         let mut st = db.prepare(&format!(
-            "SELECT c.id, c.source, a.email, c.display_name, c.emails_json, COALESCE(c.job_title, c.department, c.company), {IS_FAVOURITE}
-             FROM {from} WHERE {filter} ORDER BY c.display_name COLLATE NOCASE, c.id LIMIT {limit}"
+            "SELECT c.id, c.source, a.email, c.display_name, c.emails_json, COALESCE(c.job_title, c.department, c.company), {IS_FAVOURITE},
+                    c.message_count, c.last_contacted
+             FROM {from} WHERE {filter} ORDER BY {order} LIMIT {limit}"
         ))?;
         let rows = st
             .query_map(rusqlite::params_from_iter(args.iter()), |r| {
                 let emails: Vec<String> = serde_json::from_str(&r.get::<_, String>(4)?).unwrap_or_default();
-                Ok(Row { id: r.get(0)?, source: r.get(1)?, account_email: r.get(2)?, name: r.get(3)?, email: emails.into_iter().next(), subtitle: r.get(5)?, favourite: r.get(6)? })
+                let source: String = r.get(1)?;
+                let counted = source == EMAILED;
+                Ok(Row {
+                    id: r.get(0)?, source, account_email: r.get(2)?, name: r.get(3)?, email: emails.into_iter().next(), subtitle: r.get(5)?, favourite: r.get(6)?,
+                    message_count: if counted { Some(r.get::<_, i64>(7)?) } else { None }, last_contacted: if counted { r.get(8)? } else { None },
+                })
             })?
             .filter_map(|r| r.ok())
             .collect();
@@ -698,21 +738,30 @@ pub fn statuses(account: Option<&str>) -> Result<Vec<AccountStatus>> {
 
 /// What the Contacts view shows: both groups (filtered by the search and the account), and each account's state.
 pub fn overview(query: &str, account: Option<&str>) -> Result<Overview> {
-    Ok(Overview { favourites: group(FAVOURITES, query, account, LIST_LIMIT)?, directory: group(DIRECTORY, query, account, LIST_LIMIT)?, personal: group(PERSONAL, query, account, LIST_LIMIT)?, accounts: statuses(account)? })
+    use crate::local_contacts::{EMAILED, IMPORTED};
+    Ok(Overview {
+        favourites: group(FAVOURITES, query, account, LIST_LIMIT)?,
+        directory: group(DIRECTORY, query, account, LIST_LIMIT)?,
+        personal: group(PERSONAL, query, account, LIST_LIMIT)?,
+        emailed: group(EMAILED, query, account, LIST_LIMIT)?,
+        imported: group(IMPORTED, query, account, LIST_LIMIT)?,
+        accounts: statuses(account)?,
+    })
 }
 
 pub fn detail(id: &str) -> Result<Detail> {
     storage::with_db(|db| {
         db.query_row(
             &format!("SELECT c.id, c.source, a.email, c.folder_name, c.display_name, c.emails_json, c.phones_json, c.job_title, c.department, c.office, c.company,
-                    c.given_name, c.surname, {IS_FAVOURITE}
+                    c.given_name, c.surname, {IS_FAVOURITE}, c.message_count, c.last_contacted
              FROM contacts c JOIN accounts a ON a.id=c.account_id WHERE c.id=?1"),
             [id],
             |r| {
                 let phones: Vec<Value> = serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                let source: String = r.get(1)?;
                 Ok(Detail {
                     id: r.get(0)?,
-                    source: r.get(1)?,
+                    source: source.clone(),
                     account_email: r.get(2)?,
                     folder: r.get(3)?,
                     name: r.get(4)?,
@@ -725,6 +774,8 @@ pub fn detail(id: &str) -> Result<Detail> {
                     given_name: r.get(11)?,
                     surname: r.get(12)?,
                     favourite: r.get(13)?,
+                    message_count: if source == crate::local_contacts::EMAILED { Some(r.get::<_, i64>(14)?) } else { None },
+                    last_contacted: if source == crate::local_contacts::EMAILED { r.get(15)? } else { None },
                 })
             },
         )
@@ -834,18 +885,19 @@ pub struct Suggestion {
     pub email: String,
 }
 
-/// To/Cc suggestions while writing from a Microsoft account: its own contacts first, then the directory; names and
-/// addresses that start with what was typed come before ones that merely contain it.
+/// To/Cc/Bcc suggestions while writing: a Microsoft account's own contacts first, then the directory (a Gmail
+/// app-password account: imported contacts, then people you've emailed); names and addresses that start with what
+/// was typed come before ones that merely contain it.
 pub fn suggest(query: &str, account: &str, limit: usize) -> Result<Vec<Suggestion>> {
     let q = query.trim().to_lowercase();
-    if q.chars().count() < 2 || microsoft_accounts(Some(account))?.is_empty() {
+    if q.chars().count() < 2 || account_id_of(account).is_err() {
         return Ok(vec![]);
     }
     let rows: Vec<(String, String, String)> = storage::with_db(|db| {
         let mut st = db.prepare(
             "SELECT c.display_name, c.emails_json, c.source FROM contacts c JOIN accounts a ON a.id=c.account_id
              WHERE lower(a.email)=lower(?1) AND instr(c.search_text, ?2) > 0
-             ORDER BY c.source='personal' DESC, (instr(lower(c.display_name), ?2)=1 OR instr(c.emails_json, '\"' || ?2)>0) DESC, c.display_name COLLATE NOCASE
+             ORDER BY c.source IN ('personal','imported') DESC, (instr(lower(c.display_name), ?2)=1 OR instr(c.emails_json, '\"' || ?2)>0) DESC, c.display_name COLLATE NOCASE
              LIMIT 200",
         )?;
         let r = st.query_map(params![account, q], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;

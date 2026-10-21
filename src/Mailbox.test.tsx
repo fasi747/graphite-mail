@@ -64,12 +64,28 @@ describe("Contacts tab", () => {
     expect(await screen.findByRole("group", { name: "Directory" })).toBeTruthy();
   });
 
-  it("explains that contacts need Microsoft 365 when only Gmail accounts are connected", async () => {
-    backend([{ email: "me@gmail.com", display_name: "Gm", provider: "imap" }]);
+  it("shows local contacts (people you've emailed, imported) for a Gmail app-password account, with the Google note", async () => {
+    backend([{ email: "me@gmail.com", display_name: "Gm", provider: "imap" }], {
+      contacts_overview: () => ({ directory: { total: 0, rows: [] }, personal: { total: 0, rows: [] }, accounts: [],
+        emailed: { total: 1, rows: [{ id: "e1", source: "emailed", account_email: "me@gmail.com", name: "Ana Diaz", email: "ana@x.com", subtitle: null, message_count: 3, last_contacted: 1_700_000_000 }] },
+        imported: { total: 0, rows: [] } }),
+    });
     render(<Mailbox account={{ email: "me@gmail.com", display_name: "Gm" }} onSignOut={() => {}} />);
     await waitFor(() => expect(mocked).toHaveBeenCalledWith("list_accounts"));
     fireEvent.click(screen.getByText("Contacts", { selector: ".sidebar .name" }));
-    expect(await screen.findByText("Contacts are available for Microsoft 365 accounts.")).toBeTruthy();
+    expect(await screen.findByRole("group", { name: "People you've emailed" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Imported" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Directory" })).toBeNull();
+    expect(screen.getByText(/Google contacts need Google sign-in, coming in a later update\./)).toBeTruthy();
+    expect(screen.getByText(/3 messages · last/)).toBeTruthy();
+  });
+
+  it("explains that contacts need a Microsoft 365 or Gmail app-password account when only Google sign-in accounts are connected", async () => {
+    backend([{ email: "me@gmail.com", display_name: "Gm", provider: "google" }]);
+    render(<Mailbox account={{ email: "me@gmail.com", display_name: "Gm" }} onSignOut={() => {}} />);
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("list_accounts"));
+    fireEvent.click(screen.getByText("Contacts", { selector: ".sidebar .name" }));
+    expect(await screen.findByText("Contacts are available for Microsoft 365 accounts and Gmail (app password) accounts.")).toBeTruthy();
   });
 
   it("searches mail with a contact and starts a meeting with them from the right-click menu", async () => {
