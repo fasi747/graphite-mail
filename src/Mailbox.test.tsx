@@ -73,11 +73,13 @@ describe("Contacts tab", () => {
     render(<Mailbox account={{ email: "me@gmail.com", display_name: "Gm" }} onSignOut={() => {}} />);
     await waitFor(() => expect(mocked).toHaveBeenCalledWith("list_accounts"));
     fireEvent.click(screen.getByText("Contacts", { selector: ".sidebar .name" }));
-    expect(await screen.findByRole("group", { name: "People you've emailed" })).toBeTruthy();
+    // The group headings appear as soon as the accounts are known; the rows only once contacts_overview has answered.
+    const people = await screen.findByRole("group", { name: "People you've emailed" });
+    expect(await within(people).findByText(/3 messages · last/)).toBeTruthy();
+    expect(within(people).getByText("Ana Diaz")).toBeTruthy();
     expect(screen.getByRole("group", { name: "Imported" })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Directory" })).toBeNull();
     expect(screen.getByText(/Google contacts need Google sign-in, coming in a later update\./)).toBeTruthy();
-    expect(screen.getByText(/3 messages · last/)).toBeTruthy();
   });
 
   it("explains that contacts need a Microsoft 365 or Gmail app-password account when only Google sign-in accounts are connected", async () => {

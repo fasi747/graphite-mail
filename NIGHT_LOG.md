@@ -47,6 +47,15 @@ instead); imports go to the account chosen in the Contacts filter, else the firs
 settings live in Tauri's `tauri.windows.conf.json` overlay so Linux builds are untouched; tests that asserted old
 limitations (no contacts / suggestions for IMAP accounts, Remove cached contacts only for Microsoft) were updated.
 
+**Follow-up (next morning): flaky contacts tests on the Windows runner.** The matcher `/3 messages · last/` in
+`Mailbox.test.tsx` (and the group count / row assertions in `ContactsView.test.tsx`) failed on the slower Windows
+runner. Not a date or locale problem: reproduced on Linux by delaying the fake backend (contacts_overview 350 ms,
+everything else 120 ms). Real cause: the Contacts view renders the group headings as soon as the accounts are known
+(count 0, no rows) and fills the rows only when `contacts_overview` answers, so `findByRole("group")` resolved before
+the data and the following `getByText` on a row ran against an empty group. Fix: the tests now wait for a row
+(`findByText`) before asserting on rows or counts; no product code changed (showing the headings while loading is
+intended, the title says "Loading…"). Verified with the slowed backend (24/24) and the normal one (88/88, three runs).
+
 **Open problems / things to watch:** Credential Manager's 2560-byte limit vs long Microsoft refresh tokens; the Windows
 `cargo test` run (file locking in the migration tests); the compose screenshot shows Bcc typed but without the
 suggestion list open (cosmetic); `docs/screenshots` adds 3.1 MB to the repo.
