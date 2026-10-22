@@ -120,9 +120,7 @@ fn free_space_at(probe: &Path) -> Option<u64> {
 }
 
 fn sync_dir(p: &Path) {
-    if let Ok(f) = fs::File::open(p) {
-        let _ = f.sync_all();
-    }
+    let _ = storage::sync_dir(p); // best effort here: the copy is verified afterwards anyway
 }
 
 /// Copies one file, reads it back from the new place and compares. Returns its size.

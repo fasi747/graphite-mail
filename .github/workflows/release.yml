@@ -8,6 +8,8 @@ name: Release
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  # Manual runs (any branch) build and test without making a release: there is no tag to attach to.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,13 +18,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Tests (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, windows-latest]
-    runs-on: ${{ matrix.os }}
+  # The two platforms are independent: a Windows failure never holds up the Linux .deb (and the other way round).
+  test-linux:
+    name: Tests (ubuntu-22.04)
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,12 +29,40 @@ jobs:
           node-version: 22
           cache: npm
       - name: Linux build dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - name: No Google secret file in the checkout
+        run: test ! -f src-tauri/google_oauth.json
+      - run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Frontend tests
+        run: npm test
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+  test-windows:
+    name: Tests (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - name: NASM (needed by aws-lc-sys on Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           choco install nasm -y --no-progress
@@ -64,7 +91,7 @@ jobs:
 
   build-linux:
     name: Linux .deb
-    needs: test
+    needs: test-linux
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +114,7 @@ jobs:
             src-tauri/target
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}
       - name: Versions agree with the tag
+        if: github.ref_type == 'tag'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for f in package.json src-tauri/tauri.conf.json; do grep -q "\"version\": \"$tag\"" "$f" || { echo "$f is not at $tag"; exit 1; }; done
@@ -102,7 +130,7 @@ jobs:
 
   build-windows:
     name: Windows installer
-    needs: test
+    needs: test-windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,6 +165,8 @@ jobs:
   draft-release:
     name: Draft release
     needs: [build-linux, build-windows]
+    # Waits for both build jobs and attaches whatever was built: one platform failing doesn't block the other's file.
+    if: ${{ !cancelled() && github.ref_type == 'tag' && (needs.build-linux.result == 'success' || needs.build-windows.result == 'success') }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -155,4 +185,7 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --draft --title "Graphite Mail ${GITHUB_REF_NAME#v}" --notes-file notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" --clobber artifacts/linux-deb/*.deb artifacts/windows-installer/*.exe
+          shopt -s nullglob
+          files=(artifacts/linux-deb/*.deb artifacts/windows-installer/*.exe)
+          echo "Attaching: ${files[*]}"
+          gh release upload "$GITHUB_REF_NAME" --clobber "${files[@]}"
