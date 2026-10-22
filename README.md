@@ -116,6 +116,8 @@ Credentials, entries named `graphite-mail`). Uninstall from *Settings → Apps*;
 - **Microsoft 365**: *Sign in with Microsoft* opens your browser; sign in there and come back. Graphite Mail listens on
   a random port of `localhost` for the redirect, so nothing needs to be configured. *Cancel sign-in* stops it, and it
   gives up by itself after two minutes.
+- **Personal Microsoft accounts** (outlook.com, hotmail.com, live.com) sign in the same way. They have no
+  organisation directory, so Contacts shows only your own contacts, and no admin approval is ever involved.
 - **Gmail with Google sign-in**: the same, with *Sign in with Google* — only in builds made with a Google OAuth client
   (see *Build from source*). The public builds say "Google sign-in coming soon".
 - **Gmail with an app password**: works everywhere; see the next section.
@@ -212,6 +214,12 @@ npm test                # frontend tests
 npx tsc --noEmit        # type check
 cd src-tauri && cargo test   # Rust tests (fake Graph, Gmail, IMAP and SMTP servers; no network)
 ```
+
+The Microsoft sign-in uses the public client id in `src-tauri/src/auth.rs` with the `common` authority. If you register
+your own app in Microsoft Entra, set *Supported account types* to **Accounts in any organizational directory and
+personal Microsoft accounts** (manifest `signInAudience: AzureADandPersonalMicrosoftAccount`), add the *Mobile and
+desktop applications* redirect URI `http://localhost`, and enable *Allow public client flows*. Without the personal
+option, outlook.com / hotmail.com / live.com users get AADSTS50020 or AADSTS9002331 at sign-in.
 
 Gmail sign-in needs your own Google OAuth "Desktop app" client. Put it in the untracked file `src-tauri/google_oauth.json`
 (copy `src-tauri/google_oauth.example.json`) or set `GRAPHITE_GOOGLE_CLIENT_ID` / `GRAPHITE_GOOGLE_CLIENT_SECRET` when

@@ -19,8 +19,10 @@ export type ContactRow = {
 type Group = { total: number; rows: ContactRow[] };
 export type ContactStatus = {
   email: string; granted: boolean;
-  /** "ok" | "never" | "needs_consent" | "blocked" | "error" | "removed" */
+  /** "ok" | "never" | "needs_consent" | "blocked" | "error" | "removed"; the directory is "n/a" for personal accounts */
   directory: string; personal: string;
+  /** A personal Microsoft account (outlook.com, hotmail.com, live.com): no organisation directory. */
+  personal_account?: boolean;
   directory_count: number; personal_count: number; last_sync: number | null;
 };
 export type Overview = { favourites?: Group; directory: Group; personal: Group; emailed?: Group; imported?: Group; accounts: ContactStatus[] };
@@ -62,7 +64,7 @@ export function importLine(r: ImportReport) {
 
 /** Why one account's contacts can't be shown, in words (null when nothing needs saying). */
 export function statusNote(s: ContactStatus): { text: string; grant: boolean } | null {
-  const parts = [s.directory, s.personal];
+  const parts = [s.directory, s.personal].filter((p) => p !== "n/a");
   if (parts.includes("needs_consent")) return { text: `Graphite Mail needs your permission to read contacts and your organisation's directory for ${s.email}.`, grant: true };
   if (parts.includes("blocked")) {
     const what = s.directory === "blocked" && s.personal === "blocked" ? "contacts and the directory" : s.directory === "blocked" ? "the directory" : "your contacts";
@@ -139,7 +141,11 @@ export default function ContactsView({ accounts, onNewEmail, onNewMeeting, onSea
 
   // The groups that make sense for the accounts shown (all of them, or the one chosen in the account filter).
   const chosenKind = account ? (usable.find((a) => a.email === account)?.provider === "imap" ? "imap" : "microsoft") : null;
-  const groups = GROUPS.filter((g) => g.kind === "any" || (chosenKind ? g.kind === chosenKind : g.kind === "microsoft" ? ms.length > 0 : imap.length > 0));
+  // Personal Microsoft accounts have no organisation directory: the group is left out when none of the accounts shown has one.
+  const statusesShown = (data?.accounts ?? []).filter((s) => !account || s.email.toLowerCase() === account.toLowerCase());
+  const noDirectory = data !== null && statusesShown.length > 0 && statusesShown.every((s) => s.personal_account);
+  const groups = GROUPS.filter((g) => g.kind === "any" || (chosenKind ? g.kind === chosenKind : g.kind === "microsoft" ? ms.length > 0 : imap.length > 0))
+    .filter((g) => !(g.key === "directory" && noDirectory));
 
   // Every contact shown, in list order (a favourite appears twice; it counts once).
   const order = useMemo(() => {

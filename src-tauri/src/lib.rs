@@ -18,6 +18,8 @@ mod storage;
 mod security_tests;
 #[cfg(test)]
 mod platform_tests;
+#[cfg(test)]
+mod personal_tests;
 mod local_contacts;
 mod sync;
 

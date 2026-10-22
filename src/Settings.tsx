@@ -115,7 +115,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
           {accounts.map((a, i) => (
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
-              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider)}</span></div>
+              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider, a.personal)}</span></div>
               {(a.provider ?? "microsoft") !== "google" && (
                 <button disabled={!!moving} title={a.provider === "imap" ? "Delete this account's people-you've-emailed list and imported contacts from this computer" : "Delete this account's downloaded contacts from this computer"} onClick={() => removeContacts(a)}>Remove cached contacts</button>
               )}
