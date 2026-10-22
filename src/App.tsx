@@ -5,6 +5,8 @@ import Mailbox from "./Mailbox";
 import AppPasswordForm from "./AppPasswordForm";
 import { DragBar, TrafficLights } from "./WindowControls";
 import { applyTheme, cachedChoice } from "./theme";
+import { SIGN_IN_CANCELLED, useBrowserSignIn } from "./signIn";
+import { dataFolderFrom } from "./paths";
 import "./App.css";
 
 type Account = { email: string; display_name: string };
@@ -19,7 +21,7 @@ function SetupWizard({ defaultDir, onDone }: { defaultDir: string; onDone: () =>
 
   async function browse() {
     const picked = await open({ directory: true, defaultPath: dir, title: "Choose where Graphite Mail stores your mail" });
-    if (typeof picked === "string") setDir(picked.endsWith("graphite-mail") ? picked : `${picked}/graphite-mail`);
+    if (typeof picked === "string") setDir(dataFolderFrom(picked));
   }
 
   async function confirm() {
@@ -61,8 +63,11 @@ function Onboard({ children }: { children: React.ReactNode }) {
 export default function App() {
   const [setup, setSetup] = useState<SetupState | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  // The browser sign-in: Cancel sign-in, a time limit, and nothing from a stopped attempt reaches the screen.
+  const signIn = useBrowserSignIn<"microsoft" | "google">((n) => { setError(""); setNote(n); });
+  const busy = signIn.waiting !== null;
   const [appPassword, setAppPassword] = useState(false);
   const [googleOk, setGoogleOk] = useState<boolean | null>(null);
   useEffect(() => { invoke<boolean>("google_sign_in_available").then(setGoogleOk).catch(() => setGoogleOk(false)); }, []);
@@ -79,28 +84,9 @@ export default function App() {
     if (setup || error) invoke("app_ready").catch(() => {});
   }, [setup, error]);
 
-  async function signIn() {
-    setBusy(true);
-    setError("");
-    try {
-      setAccount(await invoke<Account>("sign_in"));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function signInGoogle() {
-    setBusy(true);
-    setError("");
-    try {
-      setAccount(await invoke<Account>("add_google_account"));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+  function start(kind: "microsoft" | "google") {
+    setError(""); setNote("");
+    signIn.run(kind, () => invoke<Account>(kind === "google" ? "add_google_account" : "sign_in"), setAccount, (e) => setError(String(e)));
   }
 
   async function signOut() {
@@ -114,7 +100,7 @@ export default function App() {
   if (appPassword) return (
     <Onboard>
       <h1>Graphite Mail</h1>
-      <AppPasswordForm onAdded={setAccount} onCancel={() => setAppPassword(false)} />
+      <AppPasswordForm onAdded={setAccount} onCancel={() => { setNote(""); setAppPassword(false); }} />
     </Onboard>
   );
 
@@ -123,14 +109,20 @@ export default function App() {
       <h1>Graphite Mail</h1>
       <p className="muted">Offline-first mail &amp; calendar for Microsoft 365 and Gmail.</p>
       <div className="row" style={{ justifyContent: "center" }}>
-        <button className="primary" onClick={signIn} disabled={busy}>
-          {busy ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
+        <button className="primary" onClick={() => start("microsoft")} disabled={busy}>
+          {signIn.waiting === "microsoft" ? "Waiting for browser sign-in…" : "Sign in with Microsoft"}
         </button>
-        {googleOk && <button onClick={signInGoogle} disabled={busy}>Sign in with Google</button>}
+        {googleOk && <button onClick={() => start("google")} disabled={busy}>{signIn.waiting === "google" ? "Waiting for browser sign-in…" : "Sign in with Google"}</button>}
       </div>
       {googleOk === false && <p className="muted">Google sign-in coming soon. Use an app password for now.</p>}
-      <button className="linkish" onClick={() => { setError(""); setAppPassword(true); }} disabled={busy}>Use Gmail with an app password instead</button>
-      {busy && <p className="muted">Finish signing in in your web browser, then come back here.</p>}
+      <button className="linkish" onClick={() => { setError(""); setNote(""); setAppPassword(true); }} disabled={busy}>Use Gmail with an app password instead</button>
+      {busy && (
+        <div className="row" style={{ justifyContent: "center", alignItems: "center" }}>
+          <span className="muted">Finish signing in in your web browser, then come back here.</span>
+          <button onClick={() => signIn.stop(SIGN_IN_CANCELLED)}>Cancel sign-in</button>
+        </div>
+      )}
+      {note && !busy && <p className="muted">{note}</p>}
       {error && <p className="error">{error}</p>}
     </Onboard>
   );

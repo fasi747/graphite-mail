@@ -65,6 +65,11 @@ fn dir_size(p: &Path) -> u64 {
         .sum()
 }
 
+#[cfg(all(test, windows))]
+pub(crate) fn normalize_for_test(p: &Path) -> Result<PathBuf> {
+    normalize(p)
+}
+
 /// Canonical form of a path that may not exist yet (canonicalise the part that does).
 fn normalize(p: &Path) -> Result<PathBuf> {
     let mut rest = Vec::new();
@@ -86,16 +91,32 @@ fn normalize(p: &Path) -> Result<PathBuf> {
     }
 }
 
-fn free_space(p: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
+/// Free bytes on the volume holding `p` (or its nearest existing parent). None when it can't be found out.
+pub(crate) fn free_space(p: &Path) -> Option<u64> {
     let mut probe = p;
     while !probe.exists() {
         probe = probe.parent()?;
     }
+    free_space_at(probe)
+}
+
+#[cfg(unix)]
+fn free_space_at(probe: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(probe.as_os_str().as_bytes()).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     (unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0)
         .then(|| st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+#[cfg(windows)]
+fn free_space_at(probe: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = probe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut free_for_caller: u64 = 0;
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_for_caller, std::ptr::null_mut(), std::ptr::null_mut()) };
+    (ok != 0).then_some(free_for_caller)
 }
 
 fn sync_dir(p: &Path) {

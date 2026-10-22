@@ -87,3 +87,74 @@ describe("recipient tokens", () => {
     expect(replaceLastToken("a@x.com;bo", "bob@x.com")).toBe("a@x.com; bob@x.com, ");
   });
 });
+
+describe("Bcc", () => {
+  const sent = () => mocked.mock.calls.filter(([c]) => c === "send_mail").map(([, a]: any) => a.draft);
+
+  it("is hidden until the Bcc link opens it, then suggests contacts like To and Cc", async () => {
+    open();
+    expect(screen.queryByRole("combobox", { name: "Bcc" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Bcc" }));
+    const bcc = screen.getByRole("combobox", { name: "Bcc" });
+    expect(screen.queryByRole("button", { name: "Bcc" })).toBeNull(); // the link goes away once the row is open
+    fireEvent.change(bcc, { target: { value: "an" } });
+    await screen.findByRole("listbox", { name: "Bcc suggestions" });
+    expect(mocked).toHaveBeenCalledWith("suggest_recipients", { query: "an", account: "me@corp.com" });
+    fireEvent.keyDown(bcc, { key: "Enter" });
+    expect((bcc as HTMLInputElement).value).toBe("anna@home.com, ");
+  });
+
+  it("sends blind copies separately from To and Cc, so they are never in the visible recipients", async () => {
+    mocked.mockImplementation(async (cmd: string) => (cmd === "send_mail" ? true : cmd === "get_signature" ? "" : null));
+    open();
+    fireEvent.change(screen.getByRole("combobox", { name: "To" }), { target: { value: "a@x.com" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Cc" }), { target: { value: "c@x.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Bcc" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Bcc" }), { target: { value: "hidden@x.com; other@x.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sent()).toHaveLength(1));
+    const d = sent()[0];
+    expect(d.to).toEqual(["a@x.com"]);
+    expect(d.cc).toEqual(["c@x.com"]);
+    expect(d.bcc).toEqual(["hidden@x.com", "other@x.com"]);
+    expect([...d.to, ...d.cc]).not.toContain("hidden@x.com");
+  });
+
+  it("a message with only blind copies can be sent; a bad Bcc address is caught", async () => {
+    mocked.mockImplementation(async (cmd: string) => (cmd === "send_mail" ? true : cmd === "get_signature" ? "" : null));
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "Bcc" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Bcc" }), { target: { value: "not-an-address" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText(/Check these addresses: not-an-address/)).toBeTruthy();
+    expect(sent()).toHaveLength(0);
+    fireEvent.change(screen.getByRole("combobox", { name: "Bcc" }), { target: { value: "hidden@x.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sent()).toHaveLength(1));
+    expect(sent()[0]).toMatchObject({ to: [], cc: [], bcc: ["hidden@x.com"] });
+  });
+
+  it("is saved with the draft and shown again when the draft has blind copies", async () => {
+    mocked.mockImplementation(async (cmd: string) => (cmd === "save_draft" ? "d1" : cmd === "get_signature" ? "" : null));
+    const onClose = vi.fn();
+    render(<Compose init={{ mode: "new", bcc: ["hidden@x.com"] }} accounts={[{ email: "me@corp.com", display_name: "Me" }]} onClose={onClose} onSent={() => {}} />);
+    const bcc = screen.getByRole("combobox", { name: "Bcc" }) as HTMLInputElement;
+    expect(bcc.value).toBe("hidden@x.com");
+    fireEvent.change(bcc, { target: { value: "hidden@x.com, more@x.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const saved = mocked.mock.calls.find(([c]) => c === "save_draft")![1] as any;
+    expect(saved.draft.bcc).toBe("hidden@x.com, more@x.com");
+  });
+
+  it("replies, reply-all and forwards start without blind copies (never carried over)", () => {
+    for (const mode of ["reply", "replyAll", "forward"] as const) {
+      cleanup();
+      render(<Compose init={{ mode, replyTo: "m1", to: ["ana@corp.com"], cc: mode === "replyAll" ? ["bob@corp.com"] : [] }} accounts={[{ email: "me@corp.com", display_name: "Me" }]} onClose={() => {}} onSent={() => {}} />);
+      expect(screen.queryByRole("combobox", { name: "Bcc" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Bcc" })).toBeTruthy();
+      expect((screen.getByRole("combobox", { name: "Cc" }) as HTMLInputElement).value).toBe(mode === "replyAll" ? "bob@corp.com" : "");
+    }
+  });
+});

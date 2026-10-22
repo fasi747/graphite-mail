@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { placeMenu, placeSubmenu, stepItem } from "./menu";
+import { initialFocus, placeMenu, placeSubmenu, stepItem } from "./menu";
 
 describe("context menu", () => {
   it("opens at the pointer when it fits", () => {
@@ -25,5 +25,17 @@ describe("submenu placement", () => {
     expect(placeSubmenu({ left: 900, right: 1100, top: 200 }, 180, 120, 1200, 800).left).toBe(722); // flipped left
     expect(placeSubmenu({ left: 900, right: 1100, top: 760 }, 180, 120, 1200, 800).top).toBe(674); // pushed up
     expect(placeSubmenu({ left: 10, right: 150, top: 5 }, 400, 900, 320, 480)).toEqual({ left: 6, top: 6 }); // tiny window
+  });
+});
+
+describe("initial keyboard focus", () => {
+  const it_ = (disabled: boolean, destructive = false) => ({ disabled, destructive });
+  it("starts on the first enabled item that isn't destructive", () => {
+    expect(initialFocus([it_(false), it_(false, true)])).toBe(0);
+    expect(initialFocus([it_(true), it_(false, true), it_(false)])).toBe(2);
+  });
+  it("starts on the menu itself (no item) when only destructive items are enabled", () => {
+    expect(initialFocus([it_(true), it_(false, true)])).toBe(-1);
+    expect(initialFocus([])).toBe(-1);
   });
 });

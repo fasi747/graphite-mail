@@ -1,7 +1,7 @@
 [package]
 name = "graphite-mail"
-version = "1.10.1"
-description = "Offline-first Microsoft 365 and Gmail mail & calendar client for Linux"
+version = "1.11.0"
+description = "Offline-first Microsoft 365 and Gmail mail & calendar client for Linux and Windows"
 authors = ["Faisal Gillani"]
 edition = "2024"
 
@@ -25,7 +25,8 @@ serde_json = "1"
 tokio = { version = "1.53.3", features = ["full"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "form", "query"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+# Secrets: Secret Service (GNOME Keyring / KWallet) on Linux, Credential Manager on Windows. Each feature only builds on its platform.
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "windows-native"] }
 uuid = { version = "1.28.0", features = ["v4"] }
 sha2 = "0.11.1"
 base64 = "0.23.1"
@@ -33,7 +34,6 @@ rand = "0.10.3"
 url = "2.5.8"
 anyhow = "1.0.104"
 dirs = "7.0.0"
-libc = "0.2"
 chrono = "0.4.45"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
@@ -47,6 +47,11 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws_
 webpki-roots = "1.0.10"
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "aws-lc-rs", "webpki-roots", "builder"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

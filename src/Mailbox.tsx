@@ -25,7 +25,7 @@ type Msg = {
   id: string; subject: string | null; sender_name: string | null; sender_address: string | null;
   snippet: string | null; received_at: number; is_read: boolean; is_flagged: boolean; has_attachments: boolean; account_email: string;
 };
-type DraftRow = { id: string; mode: ComposeInit["mode"]; reply_to: string | null; from: string | null; to: string; cc: string; subject: string; html: string; attachments: string[]; updated_at: number };
+type DraftRow = { id: string; mode: ComposeInit["mode"]; reply_to: string | null; from: string | null; to: string; cc: string; bcc?: string; subject: string; html: string; attachments: string[]; updated_at: number };
 type Att = { id: string; name: string; mime: string; size: number; downloaded: boolean };
 type QueueItem = { seq: number; what: string; failed: boolean; tries: number; error: string | null };
 type Detail = Msg & { to_json: string | null; cc_json: string | null; body_html: string | null };
@@ -158,7 +158,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const splitAddr = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
   const openDraft = (d: DraftRow) => {
     setDraftsOpen(false);
-    setCompose({ mode: d.mode, replyTo: d.reply_to ?? undefined, from: d.from ?? undefined, to: splitAddr(d.to), cc: splitAddr(d.cc), subject: d.subject, draftId: d.id, html: d.html, attachments: d.attachments });
+    setCompose({ mode: d.mode, replyTo: d.reply_to ?? undefined, from: d.from ?? undefined, to: splitAddr(d.to), cc: splitAddr(d.cc), bcc: splitAddr(d.bcc ?? ""), subject: d.subject, draftId: d.id, html: d.html, attachments: d.attachments });
   };
   const [tab, setTab] = useState<RibbonTab>("home");
   const [meetingReq, setMeetingReq] = useState<{ teams: boolean; n: number; attendees?: string[]; account?: string }>({ teams: true, n: 0 });
@@ -476,14 +476,14 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     { label: "Reply", icon: "reply", onClick: () => startCompose("reply"), disabled: !one },
     { label: "Reply All", icon: "replyall", onClick: () => startCompose("replyAll"), disabled: !one },
     { label: "Forward", icon: "forward", onClick: () => startCompose("forward"), disabled: !one },
-    { label: multiSel ? `Delete ${targets.length}` : "Delete", icon: "trash", onClick: () => del(targets), separator: true },
+    { label: multiSel ? `Delete ${targets.length}` : "Delete", icon: "trash", onClick: () => del(targets), separator: true, destructive: true },
     { label: "Move to…", icon: "move", onClick: () => setPicker("move"), disabled: !tAcct },
     { label: "Copy to…", icon: "copy", onClick: () => setPicker("copy"), disabled: !tAcct },
     { label: markReadLabel, icon: bulkRead(targets) ? "read" : "unread", onClick: () => markRead(targets), separator: true },
     { label: flagLabel, icon: "flag", onClick: () => markFlag(targets) },
     { label: "Create rule…", icon: "rules", onClick: openRuleDialog, disabled: targets.length !== 1, separator: true },
-    { label: "Block sender", icon: "block", onClick: () => blockSenders(targets), disabled: !targets.some((m) => m.sender_address) },
-    { label: "Mark as spam", icon: "junkemail", onClick: () => markSpam(targets), disabled: inJunk },
+    { label: "Block sender", icon: "block", onClick: () => blockSenders(targets), disabled: !targets.some((m) => m.sender_address), destructive: true },
+    { label: "Mark as spam", icon: "junkemail", onClick: () => markSpam(targets), disabled: inJunk, destructive: true },
   ];
   const newMeeting = (teams: boolean, attendees?: string[], account?: string) => { setView("calendar"); setMeetingReq((r) => ({ teams, n: r.n + 1, attendees, account })); };
   /** Contacts → Block sender: the same server rule as blocking from a message (future mail goes to Junk). */

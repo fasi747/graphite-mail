@@ -113,6 +113,12 @@ pub async fn sync_all() -> Result<SyncReport> {
         };
         match r {
             Ok(part) => {
+                // Gmail (app password): "People you've emailed" grows with the mail just synced; never holds up the sync.
+                if acc.provider == crate::imap::PROVIDER {
+                    if let Err(e) = crate::local_contacts::rebuild_people(&account_id) {
+                        eprintln!("[graphite] people list of {} not updated: {e}", acc.email);
+                    }
+                }
                 rep.folders += part.folders;
                 rep.messages_changed += part.messages_changed;
                 rep.bodies_downloaded += part.bodies_downloaded;

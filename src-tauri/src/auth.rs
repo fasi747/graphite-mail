@@ -1,5 +1,6 @@
 //! Microsoft identity: OAuth2 Authorization Code + PKCE via loopback redirect.
-//! Refresh tokens live only in the OS keyring (GNOME Keyring / KWallet via Secret Service).
+//! Refresh tokens live only in the OS keyring: GNOME Keyring / KWallet via Secret Service on Linux, the Windows
+//! Credential Manager on Windows (the `keyring` crate picks the backend for the platform it is built on).
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;

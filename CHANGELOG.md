@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.11.0 — Windows
+- Graphite Mail now builds and runs on **Windows 10/11** (64-bit): an NSIS installer that installs for the current user
+  (no administrator rights), with the app icon, and that fetches the WebView2 runtime if the computer doesn't have it.
+- Secrets go to the **Windows Credential Manager** (Secret Service / GNOME Keyring / KWallet on Linux, as before).
+- Mail data defaults to `%LOCALAPPDATA%\graphite-mail` on Windows (`~/.local/share/graphite-mail` on Linux); the
+  settings pointer lives in `%APPDATA%\graphite-mail`. The folder picker builds Windows paths with backslashes.
+- Free-space check before moving the data folder works on Windows (`GetDiskFreeSpaceExW`) as well as Linux (`statvfs`).
+- Attachment file names are made safe for Windows too (`< > : " | ? *`, trailing dots/spaces, device names like CON).
+- Browser sign-in (Microsoft and Google) uses the same loopback redirect on Windows; links, attachments and
+  notifications go through Tauri's cross-platform plugins (no `xdg-open`, no D-Bus calls in the app's own code).
+- GitHub Actions: a version tag runs the tests on Linux and Windows, builds the `.deb` and the Windows installer on
+  separate runners and attaches both to a **draft** release. The Google client secret is never used there.
+- **Contacts for Gmail (app password) accounts**, kept on this computer:
+  - **People you've emailed**: built from the From/To/Cc headers of synced mail (name, address, messages exchanged,
+    last contacted; newest first), updated after every sync without re-reading old mail. Spam, Bin and drafts are
+    ignored, as are no-reply boxes, bounce handlers, notification and newsletter senders and mailing-list plumbing.
+  - **Import contacts…**: vCard 2.1/3.0/4.0 (folded lines, quoted-printable, several addresses and phones, ORG/TITLE)
+    and Google Contacts CSV (classic and current column layouts, `:::`-separated values, quoted cells; Outlook-style
+    columns too), in UTF-8, UTF-16 or Windows-1252. Duplicates merge by address, inside the file and against earlier
+    imports. Stored as **Imported**.
+  - Both groups work with the right-click menu, favourites, vCard export and To/Cc/Bcc suggestions. A note says
+    "Google contacts need Google sign-in, coming in a later update."
+  - **Remove cached contacts** now also clears these; removing the account deletes them.
+
+## 1.10.3 — Bcc
+- **Bcc** in the editor for every account type. The row is hidden until you press the **Bcc** link beside Cc (it opens
+  by itself when a draft already has blind copies). Suggestions from the account's contacts work there like in To/Cc.
+  A message with only blind copies can be sent. Drafts keep their Bcc (new `bcc_text` column, added by a migration).
+- Blind copies never reach other recipients' headers: Microsoft 365 sends them as `bccRecipients` (plain sends, drafts
+  with attachments, replies and forwards alike); Gmail through Google sign-in gets a `Bcc` header that the Gmail API
+  turns into envelope recipients and removes before delivery; Gmail with an app password puts them in the SMTP envelope
+  only (RCPT TO) and writes no Bcc header at all. Tests against fake Graph, Gmail and SMTP servers prove each path.
+- Replies, reply-all and forwards start with an empty Bcc (a received message's blind copies are never known).
+- Fixed: closing the editor while its signature was still loading could throw.
+
+## 1.10.2 — Safer menus and first-run sign-in
+- Mail list right-click menu: the keyboard never starts on Delete, Block sender or Mark as spam. When the items above
+  them are unavailable (several messages selected, or the message still loading) focus starts on the next safe item,
+  and if nothing safe is enabled the menu itself takes focus, so the first Enter can never delete anything. Arrow keys
+  still reach every item. The same rule applies to the Contacts menu (Block sender).
+- First-run screen: **Cancel sign-in** while the browser sign-in waits, a 2-minute time limit with a message, and a
+  cancelled or timed-out sign-in can no longer bring a late error or open the mailbox. The sign-in logic is now shared
+  with Settings → Accounts (one hook, `src/signIn.ts`), and leaving the screen clears its timer.
+
 ## 1.10.1 — Contacts right-click menu
 - Right-click a contact (or Shift+F10 / the menu key) for New email, New meeting (contact invited, in that account's
   calendar), Search mail with this person (local search, `with:address` in the search box), Copy email address,

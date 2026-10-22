@@ -1,5 +1,6 @@
-//! Split storage: a fixed bootstrap pointer in ~/.config/graphite-mail/bootstrap.json
-//! and a user-chosen, movable data vault holding the SQLite DB and blob store.
+//! Split storage: a fixed bootstrap pointer in the per-user config folder (`~/.config/graphite-mail/bootstrap.json`
+//! on Linux, `%APPDATA%\graphite-mail\bootstrap.json` on Windows) and a user-chosen, movable data vault holding the
+//! SQLite DB and blob store.
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::Connection;
@@ -22,6 +23,11 @@ pub struct Bootstrap {
 pub(crate) static DB: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn config_dir() -> Result<PathBuf> {
+    // XDG_CONFIG_HOME wins on every platform. Linux honours it anyway; on Windows it lets the tests keep their
+    // bootstrap.json in a scratch folder instead of the real %APPDATA%.
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|x| !x.is_empty()) {
+        return Ok(PathBuf::from(x).join("graphite-mail"));
+    }
     Ok(dirs::config_dir()
         .ok_or(anyhow!("No config dir"))?
         .join("graphite-mail"))
@@ -31,8 +37,10 @@ fn bootstrap_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("bootstrap.json"))
 }
 
+/// Where mail goes unless the user picks another place: `~/.local/share/graphite-mail` on Linux,
+/// `%LOCALAPPDATA%\graphite-mail` on Windows (local, not roaming: a mailbox can be gigabytes).
 pub fn default_data_dir() -> String {
-    dirs::data_dir()
+    dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("graphite-mail")
         .to_string_lossy()
@@ -127,6 +135,14 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !has("contacts", "given_name")? {
         // v1.10.1: name parts for vCard export (filled in by the next contacts sync).
         conn.execute_batch("ALTER TABLE contacts ADD COLUMN given_name TEXT; ALTER TABLE contacts ADD COLUMN surname TEXT;")?;
+    }
+    if !has("contacts", "message_count")? {
+        // v1.11.0: "People you've emailed" for Gmail (app password) accounts.
+        conn.execute_batch("ALTER TABLE contacts ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0; ALTER TABLE contacts ADD COLUMN last_contacted INTEGER;")?;
+    }
+    if !has("drafts", "bcc_text")? {
+        // v1.10.3: blind copies in drafts.
+        conn.execute_batch("ALTER TABLE drafts ADD COLUMN bcc_text TEXT NOT NULL DEFAULT ''")?;
     }
     Ok(())
 }
@@ -276,7 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_imap_uids_message ON imap_uids(message_id);
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    source TEXT NOT NULL,              -- 'directory' or 'personal'
+    source TEXT NOT NULL,              -- 'directory', 'personal' (Microsoft 365), 'emailed', 'imported' (Gmail app password)
     remote_id TEXT NOT NULL,
     folder_id TEXT,                    -- personal: the contact folder it is in
     folder_name TEXT,
@@ -291,6 +307,8 @@ CREATE TABLE IF NOT EXISTS contacts (
     company TEXT,
     search_text TEXT NOT NULL DEFAULT '',  -- lower-case name, emails, title, department for searching
     sync_gen INTEGER NOT NULL DEFAULT 0,   -- full listings: rows not seen in the latest one are removed
+    message_count INTEGER NOT NULL DEFAULT 0, -- "people you've emailed": messages exchanged with them
+    last_contacted INTEGER,                -- "people you've emailed": when the latest of those arrived
     UNIQUE(account_id, source, remote_id)
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_list ON contacts(account_id, source, display_name);
@@ -319,6 +337,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     from_email TEXT,
     to_text TEXT NOT NULL DEFAULT '',
     cc_text TEXT NOT NULL DEFAULT '',
+    bcc_text TEXT NOT NULL DEFAULT '',
     subject TEXT NOT NULL DEFAULT '',
     html TEXT NOT NULL DEFAULT '',
     attachments_json TEXT NOT NULL DEFAULT '[]',
@@ -376,5 +395,16 @@ mod tests {
         let (g, s): (Option<String>, Option<String>) = c.query_row("SELECT given_name, surname FROM contacts", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((g, s), (None, None), "kept the contact, added the columns");
         super::migrate(&c).unwrap(); // and again: nothing to do
+    }
+
+    #[test]
+    fn a_v1_10_2_drafts_table_gets_a_bcc_column() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(&super::SCHEMA.replace("    bcc_text TEXT NOT NULL DEFAULT '',\n", "")).unwrap();
+        c.execute_batch("INSERT INTO drafts(id,to_text,updated_at) VALUES('d','a@b.c',1)").unwrap();
+        super::migrate(&c).unwrap();
+        let bcc: String = c.query_row("SELECT bcc_text FROM drafts WHERE id='d'", [], |r| r.get(0)).unwrap();
+        assert_eq!(bcc, "", "kept the draft, added the column");
+        super::migrate(&c).unwrap();
     }
 }

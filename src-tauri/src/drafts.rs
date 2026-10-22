@@ -14,6 +14,8 @@ pub struct DraftRow {
     pub from: Option<String>,
     pub to: String,
     pub cc: String,
+    #[serde(default)]
+    pub bcc: String,
     pub subject: String,
     /// Everything in the editor, as HTML (signature and quoted text included).
     pub html: String,
@@ -28,11 +30,11 @@ pub fn save(d: DraftRow) -> Result<String> {
     let now = chrono::Utc::now().timestamp();
     storage::with_db(|db| {
         db.execute(
-            "INSERT INTO drafts(id,mode,reply_to,from_email,to_text,cc_text,subject,html,attachments_json,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+            "INSERT INTO drafts(id,mode,reply_to,from_email,to_text,cc_text,bcc_text,subject,html,attachments_json,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
              ON CONFLICT(id) DO UPDATE SET mode=excluded.mode, reply_to=excluded.reply_to, from_email=excluded.from_email, to_text=excluded.to_text,
-               cc_text=excluded.cc_text, subject=excluded.subject, html=excluded.html, attachments_json=excluded.attachments_json, updated_at=excluded.updated_at",
-            params![id, d.mode, d.reply_to, d.from, d.to, d.cc, d.subject, d.html, serde_json::to_string(&d.attachments)?, now],
+               cc_text=excluded.cc_text, bcc_text=excluded.bcc_text, subject=excluded.subject, html=excluded.html, attachments_json=excluded.attachments_json, updated_at=excluded.updated_at",
+            params![id, d.mode, d.reply_to, d.from, d.to, d.cc, d.bcc, d.subject, d.html, serde_json::to_string(&d.attachments)?, now],
         )?;
         Ok(())
     })?;
@@ -41,7 +43,7 @@ pub fn save(d: DraftRow) -> Result<String> {
 
 pub fn list() -> Result<Vec<DraftRow>> {
     storage::with_db(|db| {
-        let mut st = db.prepare("SELECT id,mode,reply_to,from_email,to_text,cc_text,subject,html,attachments_json,updated_at FROM drafts ORDER BY updated_at DESC")?;
+        let mut st = db.prepare("SELECT id,mode,reply_to,from_email,to_text,cc_text,bcc_text,subject,html,attachments_json,updated_at FROM drafts ORDER BY updated_at DESC")?;
         let rows = st.query_map([], |r| {
             Ok(DraftRow {
                 id: r.get(0)?,
@@ -50,10 +52,11 @@ pub fn list() -> Result<Vec<DraftRow>> {
                 from: r.get(3)?,
                 to: r.get(4)?,
                 cc: r.get(5)?,
-                subject: r.get(6)?,
-                html: r.get(7)?,
-                attachments: serde_json::from_str(&r.get::<_, String>(8)?).unwrap_or_default(),
-                updated_at: r.get(9)?,
+                bcc: r.get(6)?,
+                subject: r.get(7)?,
+                html: r.get(8)?,
+                attachments: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or_default(),
+                updated_at: r.get(10)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -94,8 +97,9 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("gm-draft-{}", uuid::Uuid::new_v4()));
         unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg")) };
         storage::initialize(tmp.join("vault").to_str().unwrap()).unwrap();
-        let id = save(DraftRow { mode: "new".into(), from: Some("a@x.com".into()), to: "b@y.com".into(), subject: "Hello".into(), html: "<p>half written</p>".into(), attachments: vec!["/tmp/a.pdf".into()], ..Default::default() }).unwrap();
+        let id = save(DraftRow { mode: "new".into(), from: Some("a@x.com".into()), to: "b@y.com".into(), bcc: "secret@y.com".into(), subject: "Hello".into(), html: "<p>half written</p>".into(), attachments: vec!["/tmp/a.pdf".into()], ..Default::default() }).unwrap();
         assert!(exists(&id));
+        assert_eq!(list().unwrap()[0].bcc, "secret@y.com", "blind copies are kept with the draft");
         // saving again updates the same draft
         save(DraftRow { id: Some(id.clone()), mode: "new".into(), to: "b@y.com, c@z.com".into(), subject: "Hello again".into(), html: "<p>more</p>".into(), ..Default::default() }).unwrap();
         let l = list().unwrap();

@@ -1,0 +1,17 @@
+mail-white
+mail-context-menu-white
+compose-bcc
+contacts-white
+contacts-context-menu-white
+contacts-gmail-white
+settings-white
+mail-lightgrey
+mail-darkgrey
+mail-context-menu-darkgrey
+contacts-darkgrey
+contacts-context-menu-darkgrey
+calendar-darkgrey
+mail-black
+settings-black
+mail-colourful
+contacts-colourful

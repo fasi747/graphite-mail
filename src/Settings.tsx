@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { THEMES, ThemeChoice } from "./theme";
 import AppPasswordForm from "./AppPasswordForm";
-import { Acct, providerLabel, SIGN_IN_TIMEOUT_MS } from "./accounts";
+import { Acct, providerLabel } from "./accounts";
+import { SIGN_IN_CANCELLED, useBrowserSignIn } from "./signIn";
+import { dataFolderFrom } from "./paths";
 
 /** Small preview colours for each theme: sidebar, content, accent. */
 const SWATCH: Record<string, [string, string, string]> = {
@@ -21,15 +23,10 @@ const fmtSize = (b: number) => (b > 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB`
 export default function Settings({ accounts, onClose, onAccountsChanged, theme, onTheme }: {
   accounts: Acct[]; onClose: () => void; onAccountsChanged: () => void; theme: ThemeChoice; onTheme: (t: ThemeChoice) => void;
 }) {
-  const [adding, setAdding] = useState<"microsoft" | "google" | null>(null);
   const [appPassword, setAppPassword] = useState(false);
   // null until known; false in builds made without the Google client secret.
   const [googleOk, setGoogleOk] = useState<boolean | null>(null);
   useEffect(() => { invoke<boolean>("google_sign_in_available").then(setGoogleOk).catch(() => setGoogleOk(false)); }, []);
-  // Each browser sign-in gets a number; one that was cancelled or timed out can no longer change the screen.
-  const attempt = useRef(0);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
   const [info, setInfo] = useState<Info | null>(null);
   const [moving, setMoving] = useState<Progress | null>(null);
   const [message, setMessage] = useState("");
@@ -49,30 +46,24 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
     try { await invoke("set_notifications", { on }); } catch (e) { setError(String(e)); setNotifs(!on); }
   };
 
-  async function add(kind: "microsoft" | "google") {
-    const mine = ++attempt.current;
-    setError(""); setMessage(""); setAdding(kind);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => stopSignIn("Sign-in took too long and was stopped. You can try again."), SIGN_IN_TIMEOUT_MS);
-    try {
-      const a = await invoke<Acct>(kind === "google" ? "add_google_account" : "sign_in");
-      onAccountsChanged();
-      if (mine === attempt.current) setMessage(`${a.email} is signed in. Downloading its mail…`);
-    } catch (e) { if (mine === attempt.current) setError(String(e)); }
-    finally {
-      if (mine === attempt.current) { clearTimeout(timer.current); setAdding(null); }
-    }
-  }
-  /** Gives up on the browser sign-in (Cancel button or time limit), here and in the app's sign-in listener. */
-  function stopSignIn(note: string) {
-    attempt.current++;
-    clearTimeout(timer.current);
-    setAdding(null); setError(""); setMessage(note);
-    invoke("cancel_sign_in").catch(() => {});
+  // The browser sign-in: cancellable, times out, and a stopped one can no longer change the screen.
+  const signIn = useBrowserSignIn<"microsoft" | "google">((note) => { setError(""); setMessage(note); });
+  const adding = signIn.waiting;
+  function add(kind: "microsoft" | "google") {
+    setError(""); setMessage("");
+    signIn.run(kind,
+      async () => { const a = await invoke<Acct>(kind === "google" ? "add_google_account" : "sign_in"); onAccountsChanged(); return a; },
+      (a) => setMessage(`${a.email} is signed in. Downloading its mail…`),
+      (e) => setError(String(e)));
   }
   async function removeContacts(a: Acct) {
     setError(""); setMessage("");
-    try { await invoke("remove_cached_contacts", { email: a.email }); setMessage(`Cached contacts of ${a.email} were removed. Contacts → Refresh contacts downloads them again.`); }
+    try {
+      await invoke("remove_cached_contacts", { email: a.email });
+      setMessage(a.provider === "imap"
+        ? `People you've emailed and imported contacts of ${a.email} were removed. Contacts → Refresh contacts rebuilds the people list from your mail; imported contacts need importing again.`
+        : `Cached contacts of ${a.email} were removed. Contacts → Refresh contacts downloads them again.`);
+    }
     catch (e) { setError(String(e)); }
   }
   async function remove(a: Acct) {
@@ -94,7 +85,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
     setError(""); setMessage("");
     const picked = await open({ directory: true, title: "Choose where Graphite Mail should keep your mail" });
     if (typeof picked !== "string") return;
-    const target = picked.endsWith("graphite-mail") ? picked : `${picked}/graphite-mail`;
+    const target = dataFolderFrom(picked);
     const yes = await ask(
       `Move your mail and calendar data to:\n${target}\n\nThis can take a few minutes for a large mailbox. Your current data stays untouched until the copy has been checked.`,
       { title: "Move data folder", kind: "info", okLabel: "Move", cancelLabel: "Cancel" },
@@ -124,8 +115,8 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
               <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider)}</span></div>
-              {(a.provider ?? "microsoft") === "microsoft" && (
-                <button disabled={!!moving} title="Delete this account's downloaded contacts from this computer" onClick={() => removeContacts(a)}>Remove cached contacts</button>
+              {(a.provider ?? "microsoft") !== "google" && (
+                <button disabled={!!moving} title={a.provider === "imap" ? "Delete this account's people-you've-emailed list and imported contacts from this computer" : "Delete this account's downloaded contacts from this computer"} onClick={() => removeContacts(a)}>Remove cached contacts</button>
               )}
               <button disabled={!!moving} onClick={() => remove(a)}>Remove</button>
             </div>
@@ -140,7 +131,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
           {adding && (
             <div className="rowbtns" style={{ alignItems: "center" }}>
               <span className="muted" style={{ fontSize: 12 }}>Finish signing in in your web browser, then come back here.</span>
-              <button onClick={() => stopSignIn("Sign-in cancelled.")}>Cancel sign-in</button>
+              <button onClick={() => signIn.stop(SIGN_IN_CANCELLED)}>Cancel sign-in</button>
             </div>
           )}
           {appPassword && (

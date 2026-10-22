@@ -16,6 +16,9 @@ mod rules;
 mod storage;
 #[cfg(test)]
 mod security_tests;
+#[cfg(test)]
+mod platform_tests;
+mod local_contacts;
 mod sync;
 
 use auth::Account;
@@ -129,7 +132,14 @@ async fn block_address(account: String, address: String) -> CmdResult<String> {
     rules::block_address(&account, &address).await.map_err(|e| e.to_string())
 }
 
-/// To/Cc suggestions while writing from `account` (Microsoft accounts only).
+/// "Import contacts…" (Gmail app-password accounts): a vCard or Google Contacts CSV file into the Imported group.
+#[tauri::command]
+fn import_contacts(account: String, path: String) -> CmdResult<local_contacts::ImportReport> {
+    local_contacts::import_file(&account, &path).map_err(|e| e.to_string())
+}
+
+/// To/Cc/Bcc suggestions while writing from `account` (Microsoft 365 contacts, or the local contacts of a Gmail
+/// app-password account).
 #[tauri::command]
 fn suggest_recipients(query: String, account: String) -> CmdResult<Vec<contacts::Suggestion>> {
     contacts::suggest(&query, &account, 8).map_err(|e| e.to_string())
@@ -579,6 +589,7 @@ pub fn run() {
             refresh_contacts,
             grant_contacts,
             remove_cached_contacts,
+            import_contacts,
             suggest_recipients,
             set_contact_favourite,
             contact_details,
