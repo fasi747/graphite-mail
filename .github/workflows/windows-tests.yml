@@ -1,0 +1,43 @@
+# Runs only the Rust tests on a Windows runner, on demand, for any branch: Actions → "Windows Rust tests" → Run workflow,
+# pick the branch (that is the code under test), optionally filter the test names. No Google client secret is involved.
+name: Windows Rust tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "cargo test filter (empty = every test)"
+        required: false
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-tests-windows:
+    name: Rust tests (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: NASM (needed by aws-lc-sys)
+        shell: pwsh
+        run: |
+          choco install nasm -y --no-progress
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - name: No Google secret file in the checkout
+        shell: bash
+        run: test ! -f src-tauri/google_oauth.json
+      - name: Rust tests
+        working-directory: src-tauri
+        shell: bash
+        run: cargo test -- ${{ inputs.filter }}

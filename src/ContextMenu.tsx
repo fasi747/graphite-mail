@@ -1,6 +1,8 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import Icon from "./Icon";
 import { initialFocus, placeMenu, placeSubmenu, stepItem } from "./menu";
+import FolderTile from "./FolderTile";
+import type { FolderRole } from "./folderIcons";
 
 export type MenuItem = {
   label: string; icon?: string; onClick?: () => void; disabled?: boolean; separator?: boolean;
@@ -107,7 +109,7 @@ export function ContextMenu({ x, y, items, onClose, label = "Message actions" }:
   );
 }
 
-type PickFolder = { id: string; name: string; depth: number };
+type PickFolder = { id: string; name: string; depth: number; role?: FolderRole };
 
 /** Choose a folder (Move to… / Copy to…). Type to filter, arrows to pick, Enter to confirm. */
 export function FolderPicker({ title, folders, onPick, onCancel }: { title: string; folders: PickFolder[]; onPick: (id: string) => void; onCancel: () => void }) {
@@ -130,8 +132,10 @@ export function FolderPicker({ title, folders, onPick, onCancel }: { title: stri
           <div className="pickerlist" role="listbox">
             {shown.length === 0 && <div className="muted">No folders</div>}
             {shown.map((f, n) => (
-              <div key={f.id} role="option" aria-selected={n === cur} className={n === cur ? "on" : ""}
-                style={{ paddingLeft: 10 + (q ? 0 : f.depth * 14) }} onMouseEnter={() => setI(n)} onClick={() => onPick(f.id)}>{f.name}</div>
+              <div key={f.id} role="option" aria-selected={n === cur}
+                className={`${n === cur ? "on" : ""} ${f.role ? "with-tile" : ""}`}
+                style={{ paddingLeft: 10 + (q ? 0 : f.depth * 14) }} onMouseEnter={() => setI(n)} onClick={() => onPick(f.id)}>
+                {f.role && <FolderTile role={f.role} size={20} glyph={13} radius={6} />}{f.name}</div>
             ))}
           </div>
           <div className="prompt-actions">

@@ -63,8 +63,24 @@ pub(crate) fn write_bootstrap(b: &Bootstrap) -> Result<()> {
         f.sync_all()?;
     }
     fs::rename(&tmp, bootstrap_path()?)?;
-    fs::File::open(&dir)?.sync_all()?;
+    sync_dir(&dir)?;
     Ok(())
+}
+
+/// Makes a directory's entries (a just-renamed or just-written file) durable.
+/// Unix: open the directory and fsync it. Windows: `File::open` on a directory is refused ("Access is denied",
+/// os error 5: directories need FILE_FLAG_BACKUP_SEMANTICS), and NTFS journals metadata changes itself, so there is
+/// nothing to do. Before v1.11.1 this call made the first launch on Windows fail.
+pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 /// First-run: validate the chosen folder, create the vault layout and DB, then record the pointer.
