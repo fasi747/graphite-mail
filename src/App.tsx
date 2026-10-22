@@ -116,7 +116,7 @@ export default function App() {
         {googleOk && <button onClick={() => start("google")} disabled={busy}>{signIn.waiting === "google" ? "Waiting for browser sign-in…" : "Sign in with Google"}</button>}
       </div>
       {googleOk === false && <p className="muted">Google sign-in coming soon. Use an app password for now.</p>}
-      <button className="linkish" onClick={() => { setError(""); setNote(""); setAppPassword(true); }} disabled={busy}>Use Gmail with an app password instead</button>
+      <button className="linkish" onClick={() => { setError(""); setNote(""); setAppPassword(true); }} disabled={busy}>Use Gmail or another email account with an app password</button>
       {busy && (
         <div className="row" style={{ justifyContent: "center", alignItems: "center" }}>
           <span className="muted">Finish signing in in your web browser, then come back here.</span>

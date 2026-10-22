@@ -162,8 +162,8 @@ fn cancel_sign_in() {
 /// Gmail with an app password (IMAP + SMTP): checks both servers accept it, then keeps it in the keyring.
 /// Needs no Google sign-in client, so it works in every build.
 #[tauri::command]
-async fn add_imap_account(email: String, password: String) -> CmdResult<Account> {
-    imap::add_account(&email, &password).await.map_err(|e| e.to_string())
+async fn add_imap_account(email: String, password: String, settings: Option<imap::ImapSettings>) -> CmdResult<Account> {
+    imap::add_account(&email, &password, settings).await.map_err(|e| e.to_string())
 }
 
 /// The link a user can send their IT administrator to approve Graphite Mail for the organisation.

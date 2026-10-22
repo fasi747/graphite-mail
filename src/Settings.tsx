@@ -115,7 +115,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
           {accounts.map((a, i) => (
             <div key={a.email} className="acctrow">
               <i className="acctdot" style={{ background: PALETTE[i % PALETTE.length] }} />
-              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider, a.personal)}</span></div>
+              <div className="acct-name"><b>{a.display_name}</b><span className="muted">{a.email} · {providerLabel(a.provider, a.personal, a.imap)}</span></div>
               {(a.provider ?? "microsoft") !== "google" && (
                 <button disabled={!!moving} title={a.provider === "imap" ? "Delete this account's people-you've-emailed list and imported contacts from this computer" : "Delete this account's downloaded contacts from this computer"} onClick={() => removeContacts(a)}>Remove cached contacts</button>
               )}
@@ -126,7 +126,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
             <button disabled={!!adding || !!moving} onClick={() => add("microsoft")}>{adding === "microsoft" ? "Waiting for browser…" : "Add Microsoft account"}</button>
             {googleOk && <button disabled={!!adding || !!moving} onClick={() => add("google")}>{adding === "google" ? "Waiting for browser…" : "Add Google account"}</button>}
             <button className={appPassword ? "toggled" : undefined} aria-expanded={appPassword} aria-controls="apppw-form" disabled={!!moving}
-              onClick={() => { setError(""); setMessage(""); setAppPassword((open) => !open); }}>Add Gmail (app password)</button>
+              onClick={() => { setError(""); setMessage(""); setAppPassword((open) => !open); }}>Add Gmail or other email (app password)</button>
           </div>
           {googleOk === false && <div className="muted" style={{ fontSize: 12 }}>Google sign-in coming soon. Use an app password for now.</div>}
           {adding && (

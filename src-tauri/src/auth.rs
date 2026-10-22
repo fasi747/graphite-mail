@@ -112,6 +112,9 @@ pub struct Account {
     /// directory, and their consent is never "admin approval".
     #[serde(default)]
     pub personal: bool,
+    /// IMAP accounts other than Gmail: where their servers are (Gmail accounts leave this empty).
+    #[serde(default)]
+    pub imap: Option<crate::imap::ImapSettings>,
 }
 
 fn default_provider() -> String {
@@ -478,6 +481,7 @@ async fn fetch_me(token: &str) -> Result<Account> {
         rules: false,
         contacts: false,
         personal: false,
+        imap: None,
     })
 }
 

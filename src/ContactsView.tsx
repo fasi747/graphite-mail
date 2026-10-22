@@ -277,7 +277,7 @@ export default function ContactsView({ accounts, onNewEmail, onNewMeeting, onSea
           ))}
           {showImap && (
             <div className="notice cnotice" role="note">
-              <span>{GOOGLE_CONTACTS_NOTE} Until then, people you've emailed are listed from your mail, and you can import a vCard or Google Contacts CSV file.</span>
+              <span>{imap.some((a) => !a.imap) ? `${GOOGLE_CONTACTS_NOTE} Until then, people` : "Your provider's own address book isn't synced for IMAP accounts. People"} you've emailed are listed from your mail, and you can import a vCard or Google Contacts CSV file.</span>
               <button disabled={importing} onClick={importContacts}>{importing ? "Importing…" : "Import contacts…"}</button>
             </div>
           )}

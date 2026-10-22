@@ -32,7 +32,7 @@ describe("first start", () => {
     firstStart(false);
     expect(await screen.findByText("Google sign-in coming soon. Use an app password for now.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Sign in with Google" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Use Gmail with an app password instead" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use Gmail or another email account with an app password" })).toBeTruthy();
   });
 
   it("offers it when the build has it", async () => {
@@ -94,7 +94,7 @@ describe("first-run browser sign-in", () => {
     expect(calls("cancel_sign_in")).toBe(1);
     expect(screen.getByText(/took too long/)).toBeTruthy();
     expect(off(screen.getByRole("button", { name: "Sign in with Microsoft" }))).toBe(false);
-    expect(off(screen.getByRole("button", { name: "Use Gmail with an app password instead" }))).toBe(false);
+    expect(off(screen.getByRole("button", { name: "Use Gmail or another email account with an app password" }))).toBe(false);
   });
 
   it("cleans up when the screen goes away: no timeout fires later", async () => {
@@ -112,8 +112,8 @@ describe("first-run browser sign-in", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Sign in with Microsoft" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
     expect(screen.getByText("Sign-in cancelled.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Use Gmail with an app password instead" }));
-    expect(screen.getByRole("form", { name: "Gmail with an app password" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Use Gmail or another email account with an app password" }));
+    expect(screen.getByRole("form", { name: "Email with an app password" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Sign-in cancelled.")).toBeNull();
   });
