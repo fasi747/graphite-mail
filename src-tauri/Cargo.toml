@@ -34,6 +34,8 @@ rand = "0.10.3"
 url = "2.5.8"
 anyhow = "1.0.104"
 dirs = "7.0.0"
+# Canonical paths without Windows' "\\?\" prefix (the data folder is stored and shown to the user).
+dunce = "1"
 chrono = "0.4.45"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
