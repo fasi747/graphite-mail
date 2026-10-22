@@ -25,8 +25,7 @@ export default function AdminApproval({ message, email }: { message: string; ema
     setNote("");
     try {
       const url = await invoke<string>("admin_consent_link", { email: email ?? null });
-      setNote((await copyText(url)) ? "Link copied. Send it to your IT admin." : "Couldn't copy. The link is shown below.");
-      if (!(await copyText(url))) setNote(`Couldn't copy. Send this link to your IT admin: ${url}`);
+      setNote((await copyText(url)) ? "Link copied. Send it to your IT admin." : `Couldn't copy. Send this link to your IT admin: ${url}`);
     } catch (e) { setNote(String(e)); }
   }
   return (
