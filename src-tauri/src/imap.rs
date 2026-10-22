@@ -401,6 +401,7 @@ pub async fn add_account(email: &str, app_password: &str) -> Result<auth::Accoun
         provider: PROVIDER.into(),
         rules: true, // rules for this account are kept on this computer: no extra permission to ask for
         contacts: false,
+        personal: false,
     };
     if let Err(e) = auth::remember_account(&acc) {
         auth::forget_app_password(&email);

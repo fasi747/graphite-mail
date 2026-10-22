@@ -7,6 +7,8 @@ import { initials } from "./recipients";
 import { ContextMenu, MenuItem } from "./ContextMenu";
 import { ContactActions, contactMenu, firstAddresses, MenuContact, vcfName } from "./contactMenu";
 import { clickSelect, prune, selectAll, Selection, single } from "./selection";
+import { adminApproval } from "./signIn";
+import AdminApproval from "./AdminApproval";
 
 export type ContactSource = "directory" | "personal" | "emailed" | "imported";
 export type ContactRow = {
@@ -273,7 +275,7 @@ export default function ContactsView({ accounts, onNewEmail, onNewMeeting, onSea
               <button disabled={importing} onClick={importContacts}>{importing ? "Importing…" : "Import contacts…"}</button>
             </div>
           )}
-          {error && <div className="error" role="alert" style={{ padding: "4px 8px" }}>{error}</div>}
+          {error && (adminApproval(error) ? <AdminApproval message={adminApproval(error)!} email={granting || account || undefined} /> : <div className="error" role="alert" style={{ padding: "4px 8px" }}>{error}</div>)}
           {groups.map((g) => {
             const grp = data?.[g.key];
             if (g.key === "favourites" && !grp?.total) return null; // shown once there are favourites

@@ -120,6 +120,26 @@ Credentials, entries named `graphite-mail`). Uninstall from *Settings → Apps*;
   (see *Build from source*). The public builds say "Google sign-in coming soon".
 - **Gmail with an app password**: works everywhere; see the next section.
 
+## Using Graphite Mail in an organisation
+
+Some organisations don't let people approve apps themselves. Then *Sign in with Microsoft* ends on a "Need admin
+approval" page, or Microsoft answers with an error such as AADSTS90094 or AADSTS65001. Graphite Mail recognises
+this and shows **Your organisation needs to approve Graphite Mail** with a **Copy link for your IT admin** button.
+
+What to do:
+1. Press the button and send the copied link to your IT administrator. It opens Microsoft's admin-consent page for
+   Graphite Mail in your organisation's directory (the link holds only the app's public client id and the permission
+   names: no tokens, no secrets).
+2. The administrator signs in there and approves once. That covers everyone in the organisation.
+3. Sign in again in Graphite Mail. (After approving, the administrator's browser is sent to `http://localhost`, which
+   shows a "can't connect" page; that is expected and harmless.)
+
+What the link asks for, and why (the same permissions a user would be asked for, see *Permissions* below):
+`User.Read` (your name and address), `Mail.ReadWrite` and `Mail.Send` (mail), `Calendars.ReadWrite` (calendar),
+`MailboxSettings.ReadWrite` (Outlook rules), `Contacts.Read`, `People.Read` and `User.ReadBasic.All` (contacts and
+the directory). The app runs on your computer only and talks to Microsoft directly; there is no Graphite Mail server.
+Personal Microsoft accounts (outlook.com, hotmail.com, live.com) never need this.
+
 ## How to create a Gmail app password
 
 An app password is a 16-letter code that lets one application read and send your Gmail over IMAP/SMTP without your real

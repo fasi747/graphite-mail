@@ -5,7 +5,8 @@ import { ask, open } from "@tauri-apps/plugin-dialog";
 import { THEMES, ThemeChoice } from "./theme";
 import AppPasswordForm from "./AppPasswordForm";
 import { Acct, providerLabel } from "./accounts";
-import { SIGN_IN_CANCELLED, useBrowserSignIn } from "./signIn";
+import { SIGN_IN_CANCELLED, adminApproval, useBrowserSignIn } from "./signIn";
+import AdminApproval from "./AdminApproval";
 import { dataFolderFrom } from "./paths";
 
 /** Small preview colours for each theme: sidebar, content, accent. */
@@ -184,7 +185,7 @@ export default function Settings({ accounts, onClose, onAccountsChanged, theme, 
             <div><button onClick={move}>Move to another folder…</button></div>
           )}
           {message && <div style={{ color: "#30a46c" }}>{message}</div>}
-          {error && <div className="error">{error}</div>}
+          {error && (adminApproval(error) ? <AdminApproval message={adminApproval(error)!} /> : <div className="error">{error}</div>)}
         </div>
       </div>
     </div>

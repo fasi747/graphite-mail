@@ -5,7 +5,8 @@ import Mailbox from "./Mailbox";
 import AppPasswordForm from "./AppPasswordForm";
 import { DragBar, TrafficLights } from "./WindowControls";
 import { applyTheme, cachedChoice } from "./theme";
-import { SIGN_IN_CANCELLED, useBrowserSignIn } from "./signIn";
+import { SIGN_IN_CANCELLED, adminApproval, useBrowserSignIn } from "./signIn";
+import AdminApproval from "./AdminApproval";
 import { dataFolderFrom } from "./paths";
 import "./App.css";
 
@@ -123,7 +124,7 @@ export default function App() {
         </div>
       )}
       {note && !busy && <p className="muted">{note}</p>}
-      {error && <p className="error">{error}</p>}
+      {error && (adminApproval(error) ? <AdminApproval message={adminApproval(error)!} /> : <p className="error">{error}</p>)}
     </Onboard>
   );
 }

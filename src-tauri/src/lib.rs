@@ -96,7 +96,7 @@ async fn grant_contacts(app: tauri::AppHandle, email: String) -> CmdResult<Vec<c
         return Err("Contacts are available for Microsoft 365 accounts.".into());
     }
     let open = |url: &str| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()));
-    let got = auth::sign_in_scoped(open, acc.rules, true, Some(&email)).await.map_err(|e| e.to_string())?;
+    let got = auth::sign_in_scoped(open, acc.rules, true, Some(&email), acc.personal).await.map_err(|e| e.to_string())?;
     if !got.email.eq_ignore_ascii_case(&email) {
         return Err(format!("You signed in as {}, but this is for {email}. Please try again with {email}.", got.email));
     }
@@ -162,6 +162,12 @@ fn cancel_sign_in() {
 #[tauri::command]
 async fn add_imap_account(email: String, password: String) -> CmdResult<Account> {
     imap::add_account(&email, &password).await.map_err(|e| e.to_string())
+}
+
+/// The link a user can send their IT administrator to approve Graphite Mail for the organisation.
+#[tauri::command]
+fn admin_consent_link(email: Option<String>) -> String {
+    auth::admin_consent_url(email.as_deref())
 }
 
 /// Confirms the stored session still works by silently refreshing a token.
@@ -596,6 +602,7 @@ pub fn run() {
             export_vcards,
             block_address,
             cancel_sign_in,
+            admin_consent_link,
             get_notifications,
             set_notifications,
             create_folder,

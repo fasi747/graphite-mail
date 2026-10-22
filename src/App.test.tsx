@@ -118,3 +118,32 @@ describe("first-run browser sign-in", () => {
     expect(screen.queryByText("Sign-in cancelled.")).toBeNull();
   });
 });
+
+describe("admin approval", () => {
+  it("explains what to do and copies the admin link when Microsoft wants the organisation's approval", async () => {
+    const written: string[] = [];
+    Object.assign(navigator, { clipboard: { writeText: async (t: string) => { written.push(t); } } });
+    firstStart(false, {
+      sign_in: () => Promise.reject("admin-approval:Your organisation requires an administrator to approve Graphite Mail before you can sign in."),
+      admin_consent_link: () => "https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=abc",
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with Microsoft" }));
+    const box = await screen.findByRole("alert");
+    expect(box.textContent).toContain("Your organisation needs to approve Graphite Mail");
+    expect(box.textContent).toContain("requires an administrator to approve Graphite Mail"); // the backend's message is shown
+    expect(screen.queryByText(/admin-approval:/)).toBeNull(); // the marker never shows
+    fireEvent.click(screen.getByRole("button", { name: "Copy link for your IT admin" }));
+    await screen.findByText(/Link copied/);
+    expect(written).toEqual(["https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=abc"]);
+    expect(mocked).toHaveBeenCalledWith("admin_consent_link", { email: null });
+    expect(box.textContent).toContain("Mail.ReadWrite");
+    expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toBeTruthy(); // can try again
+  });
+
+  it("shows an ordinary sign-in error as before", async () => {
+    firstStart(false, { sign_in: () => Promise.reject("Sign-in timed out") });
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with Microsoft" }));
+    expect(await screen.findByText("Sign-in timed out")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Copy link for your IT admin" })).toBeNull();
+  });
+});

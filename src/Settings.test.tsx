@@ -122,3 +122,14 @@ describe("Settings → Accounts", () => {
     expect(await screen.findByText(/People you've emailed and imported contacts of me@gmail.com were removed/)).toBeTruthy();
   });
 });
+
+describe("Settings → admin approval", () => {
+  it("shows the explanation and the copy button when adding a Microsoft account needs admin approval", async () => {
+    backend(false, { sign_in: () => Promise.reject("admin-approval:Your organisation requires an administrator to approve Graphite Mail."), admin_consent_link: () => "https://example.test/consent" });
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: "Add Microsoft account" }));
+    expect(await screen.findByText("Your organisation needs to approve Graphite Mail")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy link for your IT admin" })).toBeTruthy();
+    expect(screen.queryByText(/admin-approval:/)).toBeNull();
+  });
+});
