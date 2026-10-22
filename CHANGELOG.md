@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.12.0 — Other email providers, personal Microsoft accounts, admin approval
+- **Other email (IMAP)**: Yahoo, iCloud, Zoho, Fastmail and AOL presets (servers filled in, short help on creating an
+  app password for each) and a custom IMAP/SMTP server (host, port, TLS / STARTTLS, user name). Gmail-only behaviour
+  (labels, All Mail / Starred views, X-GM extensions) now applies only when the server advertises X-GM-EXT-1. Folder
+  tiles come from SPECIAL-USE or, on non-Gmail servers, from the usual folder names. Mail only: the provider's
+  calendar and address book aren't synced, and the form says so.
+- **Personal Microsoft accounts** (outlook.com, hotmail.com, live.com): recognised from the sign-in token; no
+  organisation directory is asked for or shown, and the admin-approval message never appears for them.
+- **Admin approval**: when an organisation must approve the app first (AADSTS90094, AADSTS65001, "Need admin
+  approval"), the first-run screen, Settings and Contacts explain it, with **Copy link for your IT admin** (Microsoft's
+  admin-consent page for this app and your tenant) and a note on the permissions requested and why.
+- Housekeeping: the data folder path is stored and shown without Windows' `\\?\` prefix after a move (dunce);
+  GitHub Actions on Node 24 (checkout v5, setup-node v5, cache v5, upload-artifact v5, download-artifact v6).
+- The sidebar probes Microsoft's Conversation History and Sync Issues folders by role (from 1.11.1).
+
 ## 1.11.1 — Sidebar: matte tiles
 - New sidebar look ("Option B"): every folder has a flat coloured 24 px tile with a white glyph (Inbox blue, Drafts
   ochre, Sent green, Archive purple, Deleted red, Junk orange, Outbox teal, Sync Issues grey, everything else the

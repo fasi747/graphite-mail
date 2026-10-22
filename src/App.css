@@ -556,3 +556,9 @@ button.toggled { background: color-mix(in srgb, var(--accent) 16%, var(--field))
 .suggest li span { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .suggest li.on { background: var(--selected); color: var(--selected-text); }
 .suggest li.on span { color: inherit; opacity: .85; }
+
+/* "Your organisation needs to approve Graphite Mail" */
+.admin-approval { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; text-align: left; margin: 8px 0; }
+.admin-approval p { margin: 0; }
+.admin-approval details { font-size: 12.5px; }
+.admin-approval summary { cursor: default; }
