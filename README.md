@@ -13,6 +13,9 @@ password) IMAP + SMTP. No server of its own, no telemetry: your mail goes from t
 - **Microsoft 365 and Gmail**, several accounts at once, with an **All Inboxes** view and a colour dot per account.
 - Gmail through **Google sign-in** (needs a build with a Google client, see below) or with a **Google app password**
   (IMAP/SMTP, works in every build).
+- **Other email over IMAP**: Yahoo, iCloud, Zoho, Fastmail, AOL (presets with app-password help) or any custom
+  IMAP/SMTP server (TLS or STARTTLS). Mail only: these providers' calendars and address books aren't synced.
+- **Personal Microsoft accounts** (outlook.com, hotmail.com, live.com) as well as Microsoft 365.
 - **Offline first**: your mailbox is stored on this computer; read and search it without a connection. Read, flag, move,
   delete, reply and send while offline: changes queue up and are replayed when you reconnect, in order, with retries.
 - **Compose** with To, Cc and **Bcc** (blind copies never reach other recipients' headers on any account type), signatures
@@ -157,6 +160,17 @@ password and without Google sign-in. Google only offers them on accounts with 2-
    Graphite Mail checks the code against Gmail's servers before it saves anything.
 5. To revoke it later, delete it on the same Google page (and remove the account in Graphite Mail's Settings).
 
+### Other providers (Yahoo, iCloud, Zoho, Fastmail, AOL, custom)
+
+Choose the provider in the same form (*Email provider*). Each preset fills in the servers and shows where that provider
+creates app passwords: Yahoo and AOL under *Account security → Generate app password*; iCloud at account.apple.com
+→ *Sign-In and Security → App-Specific Passwords*; Zoho at accounts.zoho.com → *Security → App Passwords* (IMAP must be
+switched on in Zoho Mail's settings; EU/IN/AU accounts use regional servers, so pick *Custom server* there); Fastmail
+under *Settings → Privacy & Security → Integrations → New app password*. *Custom server* takes the IMAP and SMTP host,
+port and security (TLS, usually 993/465, or STARTTLS, usually 143/587) and an optional user name. Folder icons come
+from the server's SPECIAL-USE flags, or from the usual folder names (Sent, Drafts, Trash, Junk, Archive) where the
+server gives none.
+
 Notes: IMAP must be enabled for the account (Gmail → Settings → *See all settings* → *Forwarding and POP/IMAP*; on new
 accounts it is). Google Workspace administrators can switch app passwords off for their domain. The code is kept only
 in your system keyring, never in a file or the database.
@@ -173,6 +187,7 @@ Graphite Mail only ever asks for what a feature needs, when you first use the fe
 | Gmail (Google sign-in) | Sign-in | `openid email profile gmail.modify calendar` | mail, labels, sending, Google Calendar |
 | Gmail (Google sign-in) | Home → Rules → **Allow rules** | `gmail.settings.basic` | Gmail filters |
 | Gmail (app password) | Adding the account | the app password you created (IMAP + SMTP, TLS) | mail only: no calendar, no Google contacts, local rules |
+| Other email (IMAP) | Adding the account | the app password (or password) for that server | mail only: no calendar or provider address book, local rules |
 
 On this computer, the app needs nothing special: it reads and writes its own data folder, keeps secrets in the keyring,
 opens links in your browser, shows notifications, and opens a file dialog when you attach, save or import. The release
@@ -194,6 +209,8 @@ deleted by **Remove cached contacts** (Settings) or by removing the account.
   Gmail's Sent Mail may not show them for app-password accounts.
 - **Notifications on Windows** need the installed app (the Start-menu shortcut registers it); running the bare `.exe`
   from a build folder shows none.
+- **Plain IMAP servers** (anything but Gmail) have no server-wide message id: a message moved to another folder on
+  another device shows up as new after the next sync (read state and flags come from the server, so nothing is lost).
 - Shared mailboxes, delegated calendars, S/MIME and PGP are not supported.
 - The Windows build is new (v1.11): see the release notes for what has been checked on a real machine.
 
