@@ -16,6 +16,8 @@ import { ContextMenu, FolderPicker, MenuItem, QuickRule, RuleDialog } from "./Co
 import { Selection, bulkFlag, bulkRead, clickSelect, prune, selectAll, single } from "./selection";
 import { THEMES, ThemeChoice, applyTheme, cachedChoice, isChoice, isDark, resolveTheme } from "./theme";
 import { isGmail } from "./accounts";
+import FolderTile from "./FolderTile";
+import { folderRoles } from "./folderIcons";
 
 type Account = { email: string; display_name: string; provider?: string; rules?: boolean };
 const ALL = "all-inboxes";
@@ -425,6 +427,8 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
   const inboxes = folders.filter((f) => f.well_known === "inbox");
   const allUnread = inboxes.reduce((n, f) => n + f.unread, 0);
   const allTotal = inboxes.reduce((n, f) => n + f.total, 0);
+  // Which tile each folder gets (by role, never by name).
+  const roles = useMemo(() => folderRoles(folders), [folders]);
   const groups = useMemo(
     () => accounts.map((acc) => ({ acc, tree: buildTree(folders.filter((f) => f.account_email.toLowerCase() === acc.email.toLowerCase())) })),
     [accounts, folders],
@@ -500,7 +504,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     setView("mail"); setSelected(null); setFolderId(ALL); setQuery(`with:${addresses.join(",")}`);
   };
   // A message can only be moved within its own account.
-  const moveItems = folderChoices("move").map(({ f, depth }) => ({ label: f.name, indent: depth, onClick: () => moveTo(targets, f) }));
+  const moveItems = folderChoices("move").map(({ f, depth }) => ({ label: f.name, indent: depth, icon: <FolderTile role={roles.get(f.id) ?? "folder"} size={20} glyph={13} radius={6} />, onClick: () => moveTo(targets, f) }));
   const mailTab = view === "mail";
   const initials = (n?: string | null) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
@@ -508,11 +512,23 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
     <div className="shell">
       <nav className="sidebar">
         <DragBar><img src="/logo.png" alt="" className="brand-logo" /><span className="brand-name">Graphite Mail</span></DragBar>
-        <div className={`folder navitem ${view === "calendar" ? "active" : ""}`} onClick={() => setView("calendar")}>
-          <span className="ico"><Icon name="calendar" /></span><span className="name" title="All your accounts' calendars together">Master Calendar</span>
-        </div>
-        <div className={`folder navitem ${view === "contacts" ? "active" : ""}`} onClick={() => setView("contacts")}>
-          <span className="ico"><Icon name="contacts" /></span><span className="name" title="Your organisation's directory and your contacts (Microsoft 365)">Contacts</span>
+        <div className="navcards">
+          <div role="button" tabIndex={0} aria-pressed={view === "calendar"} className={`navcard ${view === "calendar" ? "active" : ""}`}
+            onClick={() => setView("calendar")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setView("calendar"); } }}>
+            <FolderTile role="calendar" size={38} glyph={22} radius={10} />
+            <div className="navcard-text">
+              <span className="name" title="All your accounts' calendars together">Master Calendar</span>
+              <span className="sub">All calendars</span>
+            </div>
+          </div>
+          <div role="button" tabIndex={0} aria-pressed={view === "contacts"} className={`navcard ${view === "contacts" ? "active" : ""}`}
+            onClick={() => setView("contacts")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setView("contacts"); } }}>
+            <FolderTile role="contacts" size={38} glyph={22} radius={10} />
+            <div className="navcard-text">
+              <span className="name" title="Your organisation's directory, your contacts, and people you've emailed">Contacts</span>
+              <span className="sub">People and directory</span>
+            </div>
+          </div>
         </div>
         <div className="folders">
           {view === "calendar" && cals.length > 0 && <div className="section" style={{ padding: "6px 10px 4px" }}>My calendars <span style={{ fontWeight: 400 }}>· tick to show</span></div>}
@@ -529,8 +545,8 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
           ))}
           <div className="section" style={{ padding: "14px 10px 4px" }}>Mailboxes</div>
           {multi && (
-            <div className={`folder ${folderId === ALL && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(ALL); setSelected(null); }}>
-              <span className="ico"><Icon name="inbox" /></span>
+            <div className={`folder allinboxes ${folderId === ALL && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(ALL); setSelected(null); }}>
+              <FolderTile role="allinboxes" size={26} glyph={16} radius={7} />
               <span className="name">All Inboxes</span>
               {allUnread > 0 && <span className="count">{allUnread}</span>}
             </div>
@@ -545,8 +561,8 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
                   <span className="acct-name"><b>{acc.display_name}</b><span className="muted">{acc.email}</span></span>
                 </div>
                 {!shut && tree.map(({ f, depth }) => (
-                  <div key={f.id} style={{ paddingLeft: 10 + depth * 16 }} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
-                    <span className="ico"><Icon name={f.well_known ?? "folder"} /></span>
+                  <div key={f.id} style={{ paddingLeft: 10 + depth * 22 }} className={`folder ${f.id === folderId && !query && view === "mail" ? "active" : ""}`} onClick={() => { setView("mail"); setQuery(""); setFolderId(f.id); setSelected(null); }}>
+                    <FolderTile role={roles.get(f.id) ?? "folder"} />
                     <span className="name">{f.name}</span>
                     {f.unread > 0 && <span className="count">{f.unread}</span>}
                   </div>
@@ -779,7 +795,7 @@ export default function Mailbox({ account: _first, onSignOut }: { account: Accou
       {ctx && targets.length > 0 && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems} onClose={() => setCtx(null)} />}
       {picker && (
         <FolderPicker title={`${picker === "move" ? "Move" : "Copy"} ${n(targets.length)} to…`}
-          folders={folderChoices(picker).map(({ f, depth }) => ({ id: f.id, name: f.name, depth }))}
+          folders={folderChoices(picker).map(({ f, depth }) => ({ id: f.id, name: f.name, depth, role: roles.get(f.id) ?? "folder" }))}
           onCancel={() => setPicker(null)}
           onPick={(id) => { const f = folders.find((x) => x.id === id); const k = picker; setPicker(null); if (f) (k === "move" ? moveTo : copyTo)(targets, f); }} />
       )}

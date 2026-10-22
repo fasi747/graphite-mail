@@ -1,4 +1,6 @@
 mail-white
+sidebar-white
+narrow-window
 mail-context-menu-white
 compose-bcc
 contacts-white
@@ -6,12 +8,18 @@ contacts-context-menu-white
 contacts-gmail-white
 settings-white
 mail-lightgrey
+sidebar-lightgrey
+mail-mediumgrey
+sidebar-mediumgrey
 mail-darkgrey
+sidebar-darkgrey
 mail-context-menu-darkgrey
 contacts-darkgrey
 contacts-context-menu-darkgrey
 calendar-darkgrey
 mail-black
+sidebar-black
 settings-black
 mail-colourful
+sidebar-colourful
 contacts-colourful

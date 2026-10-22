@@ -16,6 +16,7 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 const mocked = vi.mocked(invoke);
+const await_ = <T,>(p: Promise<T>) => p;
 
 beforeAll(() => {
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
@@ -146,5 +147,47 @@ describe("Mail list right-click menu", () => {
     expect(document.activeElement?.textContent).toContain("Delete");
     fireEvent.keyDown(menu, { key: "Enter" });
     await waitFor(() => expect(calledWith("delete_message")).toHaveLength(1));
+  });
+});
+
+describe("Sidebar tiles and cards", () => {
+  const fold = (id: string, name: string, wk: string | null, parent: string | null = null) =>
+    ({ id, remote_id: `r-${id}`, name, well_known: wk, unread: 0, total: 0, parent_remote_id: parent ? `r-${parent}` : null, account_email: "me@corp.com" });
+  const FOLDERS = [fold("in", "Posteingang", "inbox"), fold("sent", "Gesendet", "sentitems"), fold("proj", "Deleted Items", null), fold("sub", "2026", null, "proj"),
+    fold("sync", "Synchronisierungsprobleme", "syncissues"), fold("conf", "Konflikte", null, "sync")];
+
+  it("gives every folder a flat tile by role (never by name), indents subfolders, and keeps tiles decorative", async () => {
+    backend([{ email: "me@corp.com", display_name: "Me", provider: "microsoft" }], { list_folders: () => FOLDERS });
+    render(<Mailbox account={{ email: "me@corp.com", display_name: "Me" }} onSignOut={() => {}} />);
+    const row = (name: string) => (await_(screen.findByText(name, { selector: ".sidebar .folder .name" })));
+    const inbox = (await row("Posteingang")).closest(".folder")!;
+    expect(inbox.querySelector(".tile")!.getAttribute("data-role")).toBe("inbox");
+    expect((inbox.querySelector(".tile") as HTMLElement).style.background).toBe("rgb(47, 111, 214)");
+    expect(inbox.querySelector(".tile")!.getAttribute("aria-hidden")).toBe("true");
+    expect(inbox.querySelector("svg path")!.getAttribute("d")).toContain("M3 13l3-8h12l3 8v6H3z");
+    expect((await row("Gesendet")).closest(".folder")!.querySelector(".tile")!.getAttribute("data-role")).toBe("sent");
+    const custom = (await row("Deleted Items")).closest(".folder") as HTMLElement; // a user folder named like a system one
+    expect(custom.querySelector(".tile")!.getAttribute("data-role")).toBe("folder");
+    const sub = (await row("2026")).closest(".folder") as HTMLElement;
+    expect(parseInt(sub.style.paddingLeft) - parseInt(custom.style.paddingLeft)).toBe(22);
+    expect((await row("Konflikte")).closest(".folder")!.querySelector(".tile")!.getAttribute("data-role")).toBe("syncissues");
+  });
+
+  it("shows Master Calendar and Contacts as cards with subtitles, and the active one is marked", async () => {
+    backend([{ email: "me@corp.com", display_name: "Me", provider: "microsoft" }], { list_folders: () => FOLDERS });
+    render(<Mailbox account={{ email: "me@corp.com", display_name: "Me" }} onSignOut={() => {}} />);
+    const cal = screen.getByRole("button", { name: /Master Calendar/ });
+    const people = screen.getByRole("button", { name: /Contacts/ });
+    expect(cal.textContent).toContain("All calendars");
+    expect(people.textContent).toContain("People and directory");
+    expect(cal.querySelector(".tile")!.getAttribute("data-role")).toBe("calendar");
+    expect(people.querySelector(".tile")!.getAttribute("data-role")).toBe("contacts");
+    expect(cal.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(cal);
+    expect(cal.getAttribute("aria-pressed")).toBe("true");
+    expect(cal.className).toContain("active");
+    fireEvent.keyDown(people, { key: "Enter" });
+    expect(people.getAttribute("aria-pressed")).toBe("true");
+    expect(cal.getAttribute("aria-pressed")).toBe("false");
   });
 });

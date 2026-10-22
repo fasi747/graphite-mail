@@ -25,6 +25,8 @@ password) IMAP + SMTP. No server of its own, no telemetry: your mail goes from t
   with this person, copy, block, create rule).
 - **Rules**: Outlook inbox rules and Gmail filters, edited from the app; local rules for app-password accounts.
 - **You choose where your mail lives**, and can move it later: a crash-safe, verified copy with one atomic switch.
+- A **matte sidebar**: every folder has a flat coloured tile with a white glyph, chosen by the folder's role (so a
+  renamed or translated Inbox is still blue), and Master Calendar and Contacts sit in two cards at the top.
 - Six **themes** (White, Light Grey, Medium Grey, Dark Grey, Black, Colourful) or follow the system.
 - Keyboard-friendly: shortcuts for the common actions, full keyboard access to the right-click menus (which never start
   on a destructive item), Shift+F10 / the menu key.
@@ -51,6 +53,19 @@ password) IMAP + SMTP. No server of its own, no telemetry: your mail goes from t
   <tr>
     <td><img src="docs/screenshots/calendar-darkgrey.png" alt="Calendar, dark grey theme"></td>
     <td><img src="docs/screenshots/mail-lightgrey.png" alt="Mail, light grey theme"></td>
+  </tr>
+</table>
+
+The sidebar in all six themes:
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/sidebar-white.png" alt="Sidebar, White"></td>
+    <td><img src="docs/screenshots/sidebar-lightgrey.png" alt="Sidebar, Light Grey"></td>
+    <td><img src="docs/screenshots/sidebar-mediumgrey.png" alt="Sidebar, Medium Grey"></td>
+    <td><img src="docs/screenshots/sidebar-darkgrey.png" alt="Sidebar, Dark Grey"></td>
+    <td><img src="docs/screenshots/sidebar-black.png" alt="Sidebar, Black"></td>
+    <td><img src="docs/screenshots/sidebar-colourful.png" alt="Sidebar, Colourful"></td>
   </tr>
 </table>
 

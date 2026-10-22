@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.11.1 — Sidebar: matte tiles
+- New sidebar look ("Option B"): every folder has a flat coloured 24 px tile with a white glyph (Inbox blue, Drafts
+  ochre, Sent green, Archive purple, Deleted red, Junk orange, Outbox teal, Sync Issues grey, everything else the
+  brown folder tile), 280 px wide, 34 px rows, subfolders indented 22 px. All Inboxes has a larger tile.
+- Master Calendar and Contacts are two cards side by side (38 px tile, label, "All calendars" / "People and directory");
+  the active view's card uses the theme's selected colour. Below 1100 px the sidebar narrows and the cards stack.
+- Tiles are chosen by the folder's role (Microsoft well-known name, Gmail system label, IMAP SPECIAL-USE flag), never
+  by its name, so renamed and translated folders keep the right one. Conversation History and Sync Issues (with its
+  subfolders) are now recognised. The same tiles appear in the Move menu and the Move/Copy folder picker.
+- Fixed: the first launch on Windows failed with "Access is denied" (the settings pointer's directory fsync is now
+  Unix-only); Linux and Windows tests run independently in CI.
+
 ## 1.11.0 — Windows
 - Graphite Mail now builds and runs on **Windows 10/11** (64-bit): an NSIS installer that installs for the current user
   (no administrator rights), with the app icon, and that fetches the WebView2 runtime if the computer doesn't have it.

@@ -181,6 +181,9 @@ async fn sync_folders(account_id: &str) -> Result<usize> {
         "junkemail",
         "archive",
         "outbox",
+        // Roles the sidebar gives their own tile; mailboxes without them answer 404, which is ignored below.
+        "conversationhistory",
+        "syncissues",
     ];
     let mut wk_ids = std::collections::HashMap::new();
     for w in well_known {

@@ -58,7 +58,7 @@ export function Stack({ children }: { children: ReactNode }) {
 }
 
 /** Big button with a drop-down menu of choices. */
-export function BigMenu({ icon, label, disabled, items }: { icon: string; label: string; disabled?: boolean; items: { label: string; onClick: () => void; indent?: number }[] }) {
+export function BigMenu({ icon, label, disabled, items }: { icon: string; label: string; disabled?: boolean; items: { label: string; onClick: () => void; indent?: number; icon?: React.ReactNode }[] }) {
   const [open, setOpen] = useState(false);
   return (
     <span className="rmenu-wrap" onMouseLeave={() => setOpen(false)}>
@@ -70,7 +70,7 @@ export function BigMenu({ icon, label, disabled, items }: { icon: string; label:
         <div className="menu rmenu">
           {items.length === 0 && <div className="muted">No folders</div>}
           {items.map((it, i) => (
-            <div key={i} style={{ paddingLeft: 10 + (it.indent ?? 0) * 14 }} onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</div>
+            <div key={i} className={it.icon ? "with-tile" : undefined} style={{ paddingLeft: 10 + (it.indent ?? 0) * 14 }} onClick={() => { setOpen(false); it.onClick(); }}>{it.icon}{it.label}</div>
           ))}
         </div>
       )}

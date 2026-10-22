@@ -30,6 +30,11 @@
   --header-muted: var(--text-secondary);
   --on-accent: #ffffff;
   --card: transparent;
+  /* The two navigation cards: one step lighter than the sidebar. */
+  --navcard: #ffffff;
+  --navcard-hover: #f4f5f7;
+  --navcard-text: var(--text-primary);
+  --navcard-muted: var(--text-secondary);
   --heading-font: inherit;
   font-family: "Inter Variable", -apple-system, "SF Pro Text", system-ui, sans-serif;
   font-size: 13px;
@@ -48,6 +53,8 @@
   --input-bg: #fafafb;
 }
 :root[data-theme="mediumgrey"] {
+  --navcard: #d9dbde;
+  --navcard-hover: #e2e4e7;
   --window: #a7abb1;
   --wallpaper: #a3a7ad;
   --glass: rgba(196, 199, 204, 0.82);
@@ -65,6 +72,8 @@
   --input-placeholder: #50555d;
 }
 :root[data-theme="darkgrey"] {
+  --navcard: #2d2d33;
+  --navcard-hover: #34343b;
   --window: #1b1b1f;
   --wallpaper: radial-gradient(1200px 700px at 0% 0%, #23283a 0%, transparent 60%), radial-gradient(900px 600px at 100% 100%, #2a2333 0%, transparent 55%), #17171a;
   --glass: rgba(40, 40, 46, 0.55);
@@ -83,6 +92,8 @@
   --input-placeholder: #a3a3ab;
 }
 :root[data-theme="black"] {
+  --navcard: #19191c;
+  --navcard-hover: #202024;
   --window: #000000;
   --wallpaper: #000000;
   --glass: #0c0c0e;
@@ -101,6 +112,10 @@
   --input-placeholder: #a0a0a7;
 }
 :root[data-theme="colourful"] {
+  --navcard: #1c4538;
+  --navcard-hover: #225241;
+  --navcard-text: #f3f1e8;
+  --navcard-muted: rgba(243, 241, 232, 0.7);
   --window: #e9ecea;
   --wallpaper: #e9ecea;
   --glass: #ffffff;
@@ -130,7 +145,7 @@
   --heading-font: "Lora Variable", Georgia, serif;
 }
 :root[data-theme="colourful"] .sidebar, :root[data-theme="colourful"] .ribbon { backdrop-filter: none; -webkit-backdrop-filter: none; }
-:root[data-theme="colourful"] .folder.active { color: #fff; }
+:root[data-theme="colourful"] .folder.active, :root[data-theme="colourful"] .navcard.active { color: #fff; }
 :root[data-theme="colourful"] .ribbon-body { background: var(--panel); }
 :root[data-theme="colourful"] .folder.active .ico { color: var(--accent); }
 * { box-sizing: border-box; }
@@ -186,7 +201,7 @@ input:disabled, textarea:disabled { opacity: .6; }
 .onboard .row input { flex: 1; }
 
 /* Main window */
-.shell { display: grid; grid-template-columns: 236px 360px 1fr; grid-template-rows: auto minmax(0, 1fr); height: 100%; padding: 8px; gap: 8px; }
+.shell { display: grid; grid-template-columns: 280px 360px 1fr; grid-template-rows: auto minmax(0, 1fr); height: 100%; padding: 8px; gap: 8px; }
 .shell > * { min-height: 0; }
 
 .sidebar {
@@ -199,8 +214,28 @@ input:disabled, textarea:disabled { opacity: .6; }
 .sidebar .folder:hover, .sidebar button.icon:hover { background: var(--chrome-hover); }
 .sidebar .section { padding: 14px 18px 4px; font-size: 11px; font-weight: 600; color: var(--chrome-muted); }
 .sidebar .folders { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
-.folder { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-radius: 8px; white-space: nowrap; }
+/* Folder rows: a flat coloured tile with a white glyph, then the name. Nothing shiny: no gradient, shadow or glow. */
+.folder { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; white-space: nowrap; font-size: 14px; }
+.folder.allinboxes { height: 40px; }
 .folder .ico { width: 18px; display: grid; place-items: center; color: var(--accent); }
+.tile { display: inline-grid; place-items: center; flex: none; box-shadow: none; background-image: none; }
+.menu .with-tile, .pickerlist .with-tile { display: flex; align-items: center; gap: 8px; }
+/* Master Calendar and Contacts: two matte cards side by side. */
+.navcards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 2px 12px 6px; }
+.navcard { min-height: 100px; padding: 12px; border-radius: 12px; background: var(--navcard); color: var(--navcard-text); border: 1px solid var(--separator);
+  display: flex; flex-direction: column; gap: 8px; cursor: default; user-select: none; box-shadow: none; }
+.navcard:hover { background: var(--navcard-hover); }
+.navcard.active { background: var(--chrome-active); font-weight: 600; }
+.navcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.navcard-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.navcard .name { font-size: 14px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.navcard .sub { font-size: 11.5px; color: var(--navcard-muted); font-weight: 400; line-height: 1.25; overflow-wrap: anywhere; }
+/* Narrow windows: a slimmer sidebar and the cards stacked, so the message list and reader keep their room. */
+@media (max-width: 1100px) {
+  .shell { grid-template-columns: 244px 330px 1fr; }
+  .navcards { grid-template-columns: 1fr; gap: 6px; }
+  .navcard { min-height: 0; flex-direction: row; align-items: center; gap: 10px; padding: 8px 10px; }
+}
 .folder .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .folder:hover { background: var(--hover); }
 .folder.active { background: var(--chrome-active); font-weight: 600; }
