@@ -467,7 +467,9 @@ mod tests {
 
     fn assert_works_at(root: &Path) {
         let b = storage::read_bootstrap().unwrap();
-        assert_eq!(Path::new(&b.active_data_root), root);
+        // The pointer keeps the path as it was given (on Windows that can be a short "RUNNER~1" form, while
+        // canonicalize() gives the long "\\?\" form), so compare the canonical forms.
+        assert_eq!(Path::new(&b.active_data_root).canonicalize().unwrap(), root.canonicalize().unwrap());
         assert_eq!(b.migration_state, "IDLE");
         storage::with_db(|db| {
             let n: i64 = db.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
