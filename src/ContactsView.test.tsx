@@ -308,12 +308,13 @@ describe("Gmail (app password) contacts", () => {
     local();
     render(<ContactsView accounts={[gmail]} onNewEmail={() => {}} onToast={() => {}} />);
     const people = await screen.findByRole("group", { name: "People you've emailed" });
+    // The heading shows before the overview answers (count 0, no rows): wait for a row, not just the group.
+    expect(await within(people).findByText("Ben Ode")).toBeTruthy();
     expect(within(people).getByRole("button", { name: /People you've emailed\s*2/ })).toBeTruthy();
-    expect(within(people).getByText("Ben Ode")).toBeTruthy();
     expect(within(people).getByText(/ben@x\.com · 12 messages · last/)).toBeTruthy();
     expect(within(people).getByText(/1 message · last/)).toBeTruthy();
     const imported = screen.getByRole("group", { name: "Imported" });
-    expect(within(imported).getByText("Cara Lim")).toBeTruthy();
+    expect(await within(imported).findByText("Cara Lim")).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Directory" })).toBeNull();
     expect(screen.queryByRole("group", { name: "My contacts" })).toBeNull();
     expect(screen.getByRole("note").textContent).toContain(GOOGLE_CONTACTS_NOTE);
@@ -339,6 +340,7 @@ describe("Gmail (app password) contacts", () => {
     local();
     render(<ContactsView accounts={[ms, gmail]} onNewEmail={() => {}} onToast={() => {}} />);
     expect(await screen.findByRole("group", { name: "Directory" })).toBeTruthy();
+    expect(await screen.findByText("Ana Diaz")).toBeTruthy(); // data has arrived
     expect(screen.getByRole("group", { name: "People you've emailed" })).toBeTruthy();
     const select = screen.getByRole("combobox", { name: "Account" }) as HTMLSelectElement;
     expect(select.options[0].textContent).toBe("All accounts");
